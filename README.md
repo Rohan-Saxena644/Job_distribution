@@ -34,7 +34,8 @@ The repository now has the first working in-memory version:
 
 - Phase 0 is complete
 - Phase 1 is complete for in-memory job submission
-- Phase 2 and Phase 3 have a simple first version through handler registration and a worker loop
+- Phase 2 is complete for handler registration and sample handlers
+- Phase 3 is complete for a basic single-worker execution loop
 
 Scheduled jobs can store a future `ScheduledAt` time, but automatic future execution is intentionally left for the scheduling phase.
 
@@ -99,7 +100,7 @@ Deliverable:
 
 ### Phase 2 - Dispatcher and Handler Registration
 
-Status: started.
+Status: complete for the in-memory version.
 
 Goal: remove hardcoded execution logic.
 
@@ -117,7 +118,7 @@ Deliverable:
 
 ### Phase 3 - Worker Execution
 
-Status: started.
+Status: complete for the basic single-worker version.
 
 Goal: process jobs asynchronously.
 
@@ -159,6 +160,7 @@ For the first iteration, the layout is intentionally small:
       model.go
       repository.go
       dispatcher.go
+      handlers.go
       service.go
       worker.go
 ```
@@ -177,6 +179,7 @@ The first vertical slice now includes:
 - Basic `SubmitJob` flow
 - Job metadata for type, payload, priority, scheduled time, and max retries
 - Handler registration and dispatching
+- Sample handlers for `email` and `deployment`
 - Simple worker execution loop
 - Demo flow from `main.go`
 
@@ -195,12 +198,11 @@ To keep the foundation clean, the first implementation should avoid:
 
 ---
 
-## Definition of Done For The Next Prompt
+## Next Phase
 
-We can consider the first build successful when:
+The next major phase should focus on retries and dead-letter handling:
 
-- The project compiles
-- A sample job can be submitted
-- A registered handler can process it
-- Job state changes are visible in memory
-- The code structure leaves room for retries and scheduling later
+- Increment `Attempts` when a job fails
+- Retry failed jobs until `MaxRetries` is reached
+- Add a dead-letter status for jobs that exhaust retries
+- Keep the code simple enough to trace from `main.go`

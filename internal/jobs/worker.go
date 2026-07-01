@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"log"
 )
 
@@ -22,11 +23,11 @@ func (w *Worker) Start() {
 	log.Println("worker started")
 
 	for jobID := range w.Queue {
-		w.Process(jobID)
+		w.Process(context.Background(), jobID)
 	}
 }
 
-func (w *Worker) Process(jobID int) {
+func (w *Worker) Process(ctx context.Context, jobID int) {
 	job, exists := w.Repo.Get(jobID)
 	if !exists {
 		log.Println("job not found:", jobID)
@@ -38,7 +39,7 @@ func (w *Worker) Process(jobID int) {
 
 	log.Println("processing job", job.ID, "type:", job.Type)
 
-	err := w.Dispatcher.Run(job)
+	err := w.Dispatcher.Run(ctx, job)
 
 	if err != nil {
 		job.Status = JobStatusFailed

@@ -17,7 +17,7 @@ func main() {
 	worker := jobs.NewWorker(repo, dispatcher)
 	service := jobs.NewService(repo, worker)
 
-	registerHandlers(dispatcher)
+	jobs.RegisterSampleHandlers(dispatcher)
 
 	go worker.Start()
 
@@ -67,18 +67,4 @@ func main() {
 		}
 		fmt.Println()
 	}
-}
-
-func registerHandlers(dispatcher *jobs.Dispatcher) {
-	dispatcher.Register(jobs.JobType("email"), func(job jobs.Job) error {
-		log.Println("sending email to", job.Payload["to"])
-		time.Sleep(150 * time.Millisecond)
-		return nil
-	})
-
-	dispatcher.Register(jobs.JobType("deployment"), func(job jobs.Job) error {
-		log.Println("deploying service", job.Payload["service"], "version", job.Payload["version"])
-		time.Sleep(100 * time.Millisecond)
-		return fmt.Errorf("deployment failed for %s", job.Payload["service"])
-	})
 }
