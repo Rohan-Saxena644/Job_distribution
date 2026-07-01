@@ -22,23 +22,23 @@ const (
 )
 
 type Job struct {
-	ID          int
-	Type        JobType
-	Payload     map[string]string
-	Status      JobStatus
-	Priority    JobPriority
+	ID         int
+	Type       JobType
+	Payload    map[string]string
+	Status     JobStatus
+	Priority   JobPriority
 	ScheduledAt *time.Time
-	MaxRetries  int
-	Attempts    int
-	Error       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	MaxRetries int
+	Attempts   int
+	Error      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type SubmitJobInput struct {
-	Type        JobType
-	Payload     map[string]string
-	Priority    JobPriority
+	Type       JobType
+	Payload    map[string]string
+	Priority   JobPriority
 	ScheduledAt *time.Time
-	MaxRetries  int
+	MaxRetries int
 }

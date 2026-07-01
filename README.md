@@ -30,13 +30,13 @@ New job types should be added by registering handlers, without changing the core
 
 ## Current Status
 
-The repository is still at the foundation stage:
+The repository now has the first working in-memory version:
 
-- `README.md` defines the architecture direction
-- `main.go` is currently empty
-- `go.mod` has not been created yet
+- Phase 0 is complete
+- Phase 1 is complete for in-memory job submission
+- Phase 2 and Phase 3 have a simple first version through handler registration and a worker loop
 
-That means the next prompt should focus on a tight first slice instead of jumping to advanced features.
+Scheduled jobs can store a future `ScheduledAt` time, but automatic future execution is intentionally left for the scheduling phase.
 
 ---
 
@@ -58,6 +58,8 @@ If this flow is clean, retries, scheduling, persistence, and observability can b
 
 ### Phase 0 - Foundation
 
+Status: complete.
+
 Goal: set up the module, project layout, and core job model.
 
 Tasks:
@@ -75,6 +77,8 @@ Deliverable:
 - A minimal app that can create and inspect jobs
 
 ### Phase 1 - Basic Job Submission
+
+Status: complete for the in-memory version.
 
 Goal: accept jobs from inside the application.
 
@@ -95,6 +99,8 @@ Deliverable:
 
 ### Phase 2 - Dispatcher and Handler Registration
 
+Status: started.
+
 Goal: remove hardcoded execution logic.
 
 Tasks:
@@ -110,6 +116,8 @@ Deliverable:
 - A generic dispatch layer that is easy to extend
 
 ### Phase 3 - Worker Execution
+
+Status: started.
 
 Goal: process jobs asynchronously.
 
@@ -141,13 +149,11 @@ Add these only after the MVP is stable:
 
 ## Suggested Starting Structure
 
-For the first iteration, keep the layout small:
+For the first iteration, the layout is intentionally small:
 
 ```text
 /
-  cmd/
-    app/
-      main.go
+  main.go
   internal/
     jobs/
       model.go
@@ -161,16 +167,18 @@ This can expand later if we add an API server, persistent storage, metrics, or s
 
 ---
 
-## Immediate Build Scope
+## Completed Build Scope
 
-The next implementation prompt should focus only on this first vertical slice:
+The first vertical slice now includes:
 
-- Initialize the Go module
-- Define the job model and enums
-- Build an in-memory repository
-- Add handler registration and dispatching
-- Add a simple worker execution loop
-- Demonstrate the flow from `main.go`
+- Initialized Go module
+- Job model and enums
+- In-memory repository
+- Basic `SubmitJob` flow
+- Job metadata for type, payload, priority, scheduled time, and max retries
+- Handler registration and dispatching
+- Simple worker execution loop
+- Demo flow from `main.go`
 
 ---
 

@@ -1,5 +1,7 @@
 package jobs
 
+import "time"
+
 type Service struct {
 	Repo   *Repository
 	Worker *Worker
@@ -17,16 +19,23 @@ func (s *Service) SubmitJob(input SubmitJobInput) Job {
 		input.Priority = JobPriorityMedium
 	}
 
+	if input.Payload == nil {
+		input.Payload = map[string]string{}
+	}
+
 	job := Job{
-		Type:       input.Type,
-		Payload:    input.Payload,
-		Priority:   input.Priority,
-		MaxRetries: input.MaxRetries,
+		Type:        input.Type,
+		Payload:     input.Payload,
+		Priority:    input.Priority,
+		ScheduledAt: input.ScheduledAt,
+		MaxRetries:  input.MaxRetries,
 	}
 
 	job = s.Repo.Create(job)
 
-	s.Worker.Queue <- job.ID
+	if job.ScheduledAt == nil || !job.ScheduledAt.After(time.Now()) {
+		s.Worker.Queue <- job.ID
+	}
 
 	return job
 }

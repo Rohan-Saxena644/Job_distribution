@@ -41,7 +41,17 @@ func main() {
 		MaxRetries: 1,
 	})
 
-	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID)
+	scheduledAt := time.Now().Add(1 * time.Hour)
+	webhookJob := service.SubmitJob(jobs.SubmitJobInput{
+		Type:        jobs.JobType("webhook"),
+		ScheduledAt: &scheduledAt,
+		Payload: map[string]string{
+			"url": "https://example.com/hooks/job-finished",
+		},
+		MaxRetries: 2,
+	})
+
+	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID, webhookJob.ID)
 
 	time.Sleep(400 * time.Millisecond)
 
@@ -49,6 +59,9 @@ func main() {
 	fmt.Println("Final job states:")
 	for _, job := range service.ListJobs() {
 		fmt.Printf("- job %d | type=%s | status=%s", job.ID, job.Type, job.Status)
+		if job.ScheduledAt != nil {
+			fmt.Printf(" | scheduled_at=%s", job.ScheduledAt.Format(time.RFC3339))
+		}
 		if job.Error != "" {
 			fmt.Printf(" | error=%s", job.Error)
 		}
