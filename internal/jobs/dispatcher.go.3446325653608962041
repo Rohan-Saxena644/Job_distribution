@@ -1,0 +1,67 @@
+package jobs
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+)
+
+var (
+	ErrNilHandler              = errors.New("job handler cannot be nil")
+	ErrHandlerAlreadyRegistered = errors.New("job handler already registered")
+	ErrHandlerNotFound         = errors.New("job handler not found")
+)
+
+type JobHandler interface {
+	Execute(context.Context, Job) error
+}
+
+type JobHandlerFunc func(context.Context, Job) error
+
+func (fn JobHandlerFunc) Execute(ctx context.Context, job Job) error {
+	return fn(ctx, job)
+}
+
+type Dispatcher struct {
+	mu       sync.RWMutex
+	handlers map[JobType]JobHandler
+}
+
+func NewDispatcher() *Dispatcher {
+	return &Dispatcher{
+		handlers: make(map[JobType]JobHandler),
+	}
+}
+
+func (d *Dispatcher) RegisterHandler(jobType JobType, handler JobHandler) error {
+	if jobType == "" {
+		return ErrInvalidJobType
+	}
+
+	if handler == nil {
+		return ErrNilHandler
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if _, exists := d.handlers[jobType]; exists {
+		return fmt.Errorf("%w: %s", ErrHandlerAlreadyRegistered, jobType)
+	}
+
+	d.handlers[jobType] = handler
+	return nil
+}
+
+func (d *Dispatcher) Dispatch(ctx context.Context, job Job) error {
+	d.mu.RLock()
+	handler, exists := d.handlers[job.Type]
+	d.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("%w: %s", ErrHandlerNotFound, job.Type)
+	}
+
+	return handler.Execute(ctx, job.Clone())
+}
