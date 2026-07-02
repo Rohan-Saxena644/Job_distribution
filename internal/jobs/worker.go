@@ -3,12 +3,14 @@ package jobs
 import (
 	"context"
 	"log"
+	"time"
 )
 
 type Worker struct {
 	Repo       *Repository
 	Dispatcher *Dispatcher
 	Queue      chan int
+	RetryDelay time.Duration
 }
 
 func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
@@ -16,6 +18,7 @@ func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
 		Repo:       repo,
 		Dispatcher: dispatcher,
 		Queue:      make(chan int, 100),
+		RetryDelay: 300 * time.Millisecond,
 	}
 }
 
@@ -35,17 +38,16 @@ func (w *Worker) Process(ctx context.Context, jobID int) {
 	}
 
 	job.Status = JobStatusRunning
+	job.Attempts++
 	w.Repo.Save(job)
 
-	log.Println("processing job", job.ID, "type:", job.Type)
+	log.Println("processing job", job.ID, "type:", job.Type, "attempt:", job.Attempts)
 
 	err := w.Dispatcher.Run(ctx, job)
 
 	if err != nil {
-		job.Status = JobStatusFailed
 		job.Error = err.Error()
-		w.Repo.Save(job)
-		log.Println("job failed", job.ID, err)
+		w.handleFailedJob(job, err)
 		return
 	}
 
@@ -54,4 +56,26 @@ func (w *Worker) Process(ctx context.Context, jobID int) {
 	w.Repo.Save(job)
 
 	log.Println("job completed", job.ID)
+}
+
+func (w *Worker) handleFailedJob(job Job, err error) {
+	if job.Attempts <= job.MaxRetries {
+		job.Status = JobStatusFailed
+		w.Repo.Save(job)
+
+		log.Println("job failed", job.ID, err)
+		log.Println("retrying job", job.ID, "after", w.RetryDelay)
+
+		go func() {
+			time.Sleep(w.RetryDelay)
+			w.Queue <- job.ID
+		}()
+
+		return
+	}
+
+	job.Status = JobStatusDeadLetter
+	w.Repo.Save(job)
+
+	log.Println("job moved to dead letter", job.ID, err)
 }

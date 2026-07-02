@@ -36,6 +36,7 @@ The repository now has the first working in-memory version:
 - Phase 1 is complete for in-memory job submission
 - Phase 2 is complete for handler registration and sample handlers
 - Phase 3 is complete for a basic single-worker execution loop
+- Phase 4 is complete for simple retries and dead-letter handling
 
 Scheduled jobs can store a future `ScheduledAt` time, but automatic future execution is intentionally left for the scheduling phase.
 
@@ -134,11 +135,27 @@ Deliverable:
 
 - A functional worker flow that processes jobs from a queue
 
-### Phase 4+
+### Phase 4 - Retries and Dead Lettering
+
+Status: complete for the basic in-memory version.
+
+Goal: make failed jobs safer to process.
+
+Tasks:
+
+- Increment `Attempts` each time a worker runs a job
+- Retry failed jobs until `MaxRetries` is reached
+- Move exhausted jobs to `dead_letter`
+- Keep the retry loop easy to follow in `worker.go`
+
+Deliverable:
+
+- A worker that can retry temporary failures and separate permanently failed jobs
+
+### Phase 5+
 
 Add these only after the MVP is stable:
 
-- Retries and dead-letter handling
 - Priority queues
 - Scheduling
 - Per-job-type concurrency limits
@@ -181,6 +198,7 @@ The first vertical slice now includes:
 - Handler registration and dispatching
 - Sample handlers for `email` and `deployment`
 - Simple worker execution loop
+- Retry and dead-letter handling
 - Demo flow from `main.go`
 
 ---
@@ -200,9 +218,9 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next major phase should focus on retries and dead-letter handling:
+The next major phase should focus on priority queues:
 
-- Increment `Attempts` when a job fails
-- Retry failed jobs until `MaxRetries` is reached
-- Add a dead-letter status for jobs that exhaust retries
+- Make high priority jobs run before medium and low priority jobs
+- Keep the worker API simple while changing how jobs are selected
+- Show the priority order clearly in the demo output
 - Keep the code simple enough to trace from `main.go`

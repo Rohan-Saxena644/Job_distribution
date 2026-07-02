@@ -7,10 +7,11 @@ type JobType string
 type JobStatus string
 
 const (
-	JobStatusQueued    JobStatus = "queued"
-	JobStatusRunning   JobStatus = "running"
-	JobStatusCompleted JobStatus = "completed"
-	JobStatusFailed    JobStatus = "failed"
+	JobStatusQueued     JobStatus = "queued"
+	JobStatusRunning    JobStatus = "running"
+	JobStatusCompleted  JobStatus = "completed"
+	JobStatusFailed     JobStatus = "failed"
+	JobStatusDeadLetter JobStatus = "dead_letter"
 )
 
 type JobPriority string

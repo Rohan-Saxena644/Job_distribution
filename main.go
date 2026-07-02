@@ -53,12 +53,12 @@ func main() {
 
 	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID, webhookJob.ID)
 
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	fmt.Println()
 	fmt.Println("Final job states:")
 	for _, job := range service.ListJobs() {
-		fmt.Printf("- job %d | type=%s | status=%s", job.ID, job.Type, job.Status)
+		fmt.Printf("- job %d | type=%s | status=%s | attempts=%d | max_retries=%d", job.ID, job.Type, job.Status, job.Attempts, job.MaxRetries)
 		if job.ScheduledAt != nil {
 			fmt.Printf(" | scheduled_at=%s", job.ScheduledAt.Format(time.RFC3339))
 		}
