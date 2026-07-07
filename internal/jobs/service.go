@@ -34,7 +34,7 @@ func (s *Service) SubmitJob(input SubmitJobInput) Job {
 	job = s.Repo.Create(job)
 
 	if job.ScheduledAt == nil || !job.ScheduledAt.After(time.Now()) {
-		s.Worker.Queue <- job.ID
+		s.Worker.Enqueue(job)
 	}
 
 	return job

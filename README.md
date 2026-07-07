@@ -37,6 +37,7 @@ The repository now has the first working in-memory version:
 - Phase 2 is complete for handler registration and sample handlers
 - Phase 3 is complete for a basic single-worker execution loop
 - Phase 4 is complete for simple retries and dead-letter handling
+- Phase 5 is complete for simple priority queues
 
 Scheduled jobs can store a future `ScheduledAt` time, but automatic future execution is intentionally left for the scheduling phase.
 
@@ -152,11 +153,27 @@ Deliverable:
 
 - A worker that can retry temporary failures and separate permanently failed jobs
 
-### Phase 5+
+### Phase 5 - Priority Queues
+
+Status: complete for the basic in-memory version.
+
+Goal: make important jobs run before less important jobs.
+
+Tasks:
+
+- Add high, medium, and low priority queues
+- Route submitted jobs into the correct queue
+- Make the worker check high priority work first, then medium, then low
+- Keep retries on the same priority level as the original job
+
+Deliverable:
+
+- A worker that prefers higher priority jobs while keeping the code easy to trace
+
+### Phase 6+
 
 Add these only after the MVP is stable:
 
-- Priority queues
 - Scheduling
 - Per-job-type concurrency limits
 - Distributed locking
@@ -199,6 +216,7 @@ The first vertical slice now includes:
 - Sample handlers for `email` and `deployment`
 - Simple worker execution loop
 - Retry and dead-letter handling
+- Priority-aware queues
 - Demo flow from `main.go`
 
 ---
@@ -218,9 +236,9 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next major phase should focus on priority queues:
+The next major phase should focus on scheduling:
 
-- Make high priority jobs run before medium and low priority jobs
-- Keep the worker API simple while changing how jobs are selected
-- Show the priority order clearly in the demo output
+- Find queued jobs whose `ScheduledAt` time has arrived
+- Move ready scheduled jobs into the worker queues
+- Keep future jobs stored without running them early
 - Keep the code simple enough to trace from `main.go`

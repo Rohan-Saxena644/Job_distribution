@@ -19,7 +19,15 @@ func main() {
 
 	jobs.RegisterSampleHandlers(dispatcher)
 
-	go worker.Start()
+	deploymentJob := service.SubmitJob(jobs.SubmitJobInput{
+		Type:     jobs.JobType("deployment"),
+		Priority: jobs.JobPriorityLow,
+		Payload: map[string]string{
+			"service": "billing-api",
+			"version": "v1.0.0",
+		},
+		MaxRetries: 1,
+	})
 
 	emailJob := service.SubmitJob(jobs.SubmitJobInput{
 		Type:     jobs.JobType("email"),
@@ -30,15 +38,6 @@ func main() {
 			"body":    "Your account is ready.",
 		},
 		MaxRetries: 3,
-	})
-
-	deploymentJob := service.SubmitJob(jobs.SubmitJobInput{
-		Type: jobs.JobType("deployment"),
-		Payload: map[string]string{
-			"service": "billing-api",
-			"version": "v1.0.0",
-		},
-		MaxRetries: 1,
 	})
 
 	scheduledAt := time.Now().Add(1 * time.Hour)
@@ -53,12 +52,14 @@ func main() {
 
 	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID, webhookJob.ID)
 
+	go worker.Start()
+
 	time.Sleep(1 * time.Second)
 
 	fmt.Println()
 	fmt.Println("Final job states:")
 	for _, job := range service.ListJobs() {
-		fmt.Printf("- job %d | type=%s | status=%s | attempts=%d | max_retries=%d", job.ID, job.Type, job.Status, job.Attempts, job.MaxRetries)
+		fmt.Printf("- job %d | type=%s | priority=%s | status=%s | attempts=%d | max_retries=%d", job.ID, job.Type, job.Priority, job.Status, job.Attempts, job.MaxRetries)
 		if job.ScheduledAt != nil {
 			fmt.Printf(" | scheduled_at=%s", job.ScheduledAt.Format(time.RFC3339))
 		}

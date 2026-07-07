@@ -7,26 +7,73 @@ import (
 )
 
 type Worker struct {
-	Repo       *Repository
-	Dispatcher *Dispatcher
-	Queue      chan int
-	RetryDelay time.Duration
+	Repo        *Repository
+	Dispatcher  *Dispatcher
+	HighQueue   chan int
+	MediumQueue chan int
+	LowQueue    chan int
+	RetryDelay  time.Duration
 }
 
 func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
 	return &Worker{
-		Repo:       repo,
-		Dispatcher: dispatcher,
-		Queue:      make(chan int, 100),
-		RetryDelay: 300 * time.Millisecond,
+		Repo:        repo,
+		Dispatcher:  dispatcher,
+		HighQueue:   make(chan int, 100),
+		MediumQueue: make(chan int, 100),
+		LowQueue:    make(chan int, 100),
+		RetryDelay:  300 * time.Millisecond,
+	}
+}
+
+func (w *Worker) Enqueue(job Job) {
+	switch job.Priority {
+	case JobPriorityHigh:
+		w.HighQueue <- job.ID
+	case JobPriorityLow:
+		w.LowQueue <- job.ID
+	default:
+		w.MediumQueue <- job.ID
 	}
 }
 
 func (w *Worker) Start() {
 	log.Println("worker started")
 
-	for jobID := range w.Queue {
+	for {
+		jobID := w.nextJob()
 		w.Process(context.Background(), jobID)
+	}
+}
+
+func (w *Worker) nextJob() int {
+	for {
+		select {
+		case jobID := <-w.HighQueue:
+			return jobID
+		default:
+		}
+
+		select {
+		case jobID := <-w.MediumQueue:
+			return jobID
+		default:
+		}
+
+		select {
+		case jobID := <-w.LowQueue:
+			return jobID
+		default:
+		}
+
+		select {
+		case jobID := <-w.HighQueue:
+			return jobID
+		case jobID := <-w.MediumQueue:
+			return jobID
+		case jobID := <-w.LowQueue:
+			return jobID
+		}
 	}
 }
 
@@ -41,7 +88,7 @@ func (w *Worker) Process(ctx context.Context, jobID int) {
 	job.Attempts++
 	w.Repo.Save(job)
 
-	log.Println("processing job", job.ID, "type:", job.Type, "attempt:", job.Attempts)
+	log.Println("processing job", job.ID, "type:", job.Type, "priority:", job.Priority, "attempt:", job.Attempts)
 
 	err := w.Dispatcher.Run(ctx, job)
 
@@ -68,7 +115,7 @@ func (w *Worker) handleFailedJob(job Job, err error) {
 
 		go func() {
 			time.Sleep(w.RetryDelay)
-			w.Queue <- job.ID
+			w.Enqueue(job)
 		}()
 
 		return
