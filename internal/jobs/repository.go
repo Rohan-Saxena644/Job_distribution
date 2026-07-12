@@ -67,3 +67,33 @@ func (r *Repository) List() []Job {
 
 	return jobs
 }
+
+func (r *Repository) DueScheduledJobs(now time.Time) []Job {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	jobs := []Job{}
+	for _, id := range r.order {
+		job := r.jobs[id]
+
+		if job.Status != JobStatusQueued {
+			continue
+		}
+
+		if job.Enqueued {
+			continue
+		}
+
+		if job.ScheduledAt == nil {
+			continue
+		}
+
+		if job.ScheduledAt.After(now) {
+			continue
+		}
+
+		jobs = append(jobs, job)
+	}
+
+	return jobs
+}

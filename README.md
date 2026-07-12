@@ -38,8 +38,9 @@ The repository now has the first working in-memory version:
 - Phase 3 is complete for a basic single-worker execution loop
 - Phase 4 is complete for simple retries and dead-letter handling
 - Phase 5 is complete for simple priority queues
+- Phase 6 is complete for simple scheduled job enqueueing
 
-Scheduled jobs can store a future `ScheduledAt` time, but automatic future execution is intentionally left for the scheduling phase.
+Scheduled jobs can store a future `ScheduledAt` time and are moved into worker queues when that time arrives.
 
 ---
 
@@ -113,6 +114,7 @@ Tasks:
 - Build a dispatcher that routes by `JobType`
 - Add a registration API such as `RegisterHandler(jobType, handler)`
 - Add sample handlers for `email` and `deployment`
+- Add a sample handler for `webhook`
 
 Deliverable:
 
@@ -170,11 +172,27 @@ Deliverable:
 
 - A worker that prefers higher priority jobs while keeping the code easy to trace
 
-### Phase 6+
+### Phase 6 - Scheduling
+
+Status: complete for the basic in-memory version.
+
+Goal: support jobs that should run in the future.
+
+Tasks:
+
+- Store future `ScheduledAt` times on jobs
+- Add a scheduler loop that checks for due jobs
+- Enqueue due scheduled jobs into the existing worker priority queues
+- Avoid enqueueing the same scheduled job repeatedly
+
+Deliverable:
+
+- A basic scheduler that turns future jobs into runnable queued work
+
+### Phase 7+
 
 Add these only after the MVP is stable:
 
-- Scheduling
 - Per-job-type concurrency limits
 - Distributed locking
 - Idempotency
@@ -195,6 +213,7 @@ For the first iteration, the layout is intentionally small:
       repository.go
       dispatcher.go
       handlers.go
+      scheduler.go
       service.go
       worker.go
 ```
@@ -217,6 +236,7 @@ The first vertical slice now includes:
 - Simple worker execution loop
 - Retry and dead-letter handling
 - Priority-aware queues
+- Scheduled job enqueueing
 - Demo flow from `main.go`
 
 ---
@@ -236,9 +256,9 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next major phase should focus on scheduling:
+The next major phase should focus on per-job-type concurrency limits:
 
-- Find queued jobs whose `ScheduledAt` time has arrived
-- Move ready scheduled jobs into the worker queues
-- Keep future jobs stored without running them early
+- Limit how many jobs of one type can run at once
+- Start with simple limits such as 1 deployment job at a time
+- Keep the worker code readable before adding multiple workers
 - Keep the code simple enough to trace from `main.go`

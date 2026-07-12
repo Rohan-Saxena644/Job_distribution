@@ -15,6 +15,7 @@ func main() {
 	repo := jobs.NewRepository()
 	dispatcher := jobs.NewDispatcher()
 	worker := jobs.NewWorker(repo, dispatcher)
+	scheduler := jobs.NewScheduler(repo, worker)
 	service := jobs.NewService(repo, worker)
 
 	jobs.RegisterSampleHandlers(dispatcher)
@@ -40,9 +41,10 @@ func main() {
 		MaxRetries: 3,
 	})
 
-	scheduledAt := time.Now().Add(1 * time.Hour)
+	scheduledAt := time.Now().Add(2 * time.Second)
 	webhookJob := service.SubmitJob(jobs.SubmitJobInput{
 		Type:        jobs.JobType("webhook"),
+		Priority:    jobs.JobPriorityMedium,
 		ScheduledAt: &scheduledAt,
 		Payload: map[string]string{
 			"url": "https://example.com/hooks/job-finished",
@@ -53,13 +55,14 @@ func main() {
 	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID, webhookJob.ID)
 
 	go worker.Start()
+	go scheduler.Start()
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	fmt.Println()
 	fmt.Println("Final job states:")
 	for _, job := range service.ListJobs() {
-		fmt.Printf("- job %d | type=%s | priority=%s | status=%s | attempts=%d | max_retries=%d", job.ID, job.Type, job.Priority, job.Status, job.Attempts, job.MaxRetries)
+		fmt.Printf("- job %d | type=%s | priority=%s | status=%s | enqueued=%t | attempts=%d | max_retries=%d", job.ID, job.Type, job.Priority, job.Status, job.Enqueued, job.Attempts, job.MaxRetries)
 		if job.ScheduledAt != nil {
 			fmt.Printf(" | scheduled_at=%s", job.ScheduledAt.Format(time.RFC3339))
 		}

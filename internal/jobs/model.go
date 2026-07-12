@@ -29,6 +29,7 @@ type Job struct {
 	Status      JobStatus
 	Priority    JobPriority
 	ScheduledAt *time.Time
+	Enqueued    bool
 	MaxRetries  int
 	Attempts    int
 	Error       string

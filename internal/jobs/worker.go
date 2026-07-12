@@ -27,6 +27,9 @@ func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
 }
 
 func (w *Worker) Enqueue(job Job) {
+	job.Enqueued = true
+	w.Repo.Save(job)
+
 	switch job.Priority {
 	case JobPriorityHigh:
 		w.HighQueue <- job.ID
@@ -84,6 +87,7 @@ func (w *Worker) Process(ctx context.Context, jobID int) {
 		return
 	}
 
+	job.Enqueued = false
 	job.Status = JobStatusRunning
 	job.Attempts++
 	w.Repo.Save(job)
