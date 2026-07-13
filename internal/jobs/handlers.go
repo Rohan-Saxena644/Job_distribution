@@ -19,7 +19,7 @@ type DeploymentHandler struct{}
 
 func (h DeploymentHandler) Execute(ctx context.Context, job Job) error {
 	log.Println("deploying service", job.Payload["service"], "version", job.Payload["version"])
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(350 * time.Millisecond)
 	return fmt.Errorf("deployment failed for %s", job.Payload["service"])
 }
 

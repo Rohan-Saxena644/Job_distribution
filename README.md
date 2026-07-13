@@ -39,8 +39,9 @@ The repository now has the first working in-memory version:
 - Phase 4 is complete for simple retries and dead-letter handling
 - Phase 5 is complete for simple priority queues
 - Phase 6 is complete for simple scheduled job enqueueing
+- Phase 7 is complete for a basic worker pool and per-job-type concurrency limits
 
-Scheduled jobs can store a future `ScheduledAt` time and are moved into worker queues when that time arrives.
+The demo runs three workers, while limiting deployment jobs to one active execution at a time.
 
 ---
 
@@ -189,11 +190,28 @@ Deliverable:
 
 - A basic scheduler that turns future jobs into runnable queued work
 
-### Phase 7+
+### Phase 7 - Worker Pool and Concurrency Limits
+
+Status: complete for the basic in-memory version.
+
+Goal: process different jobs concurrently without allowing one job type to overload a dependency.
+
+Tasks:
+
+- Start multiple worker loops using the same priority queues
+- Give each worker an ID so concurrent execution is easy to follow in logs
+- Add configurable limits for individual job types
+- Limit deployment jobs to one active execution at a time in the demo
+- Allow job types without a configured limit to run normally
+
+Deliverable:
+
+- Three workers can process jobs concurrently while deployment jobs run one at a time
+
+### Phase 8+
 
 Add these only after the MVP is stable:
 
-- Per-job-type concurrency limits
 - Distributed locking
 - Idempotency
 - Metrics and production hardening
@@ -237,6 +255,8 @@ The first vertical slice now includes:
 - Retry and dead-letter handling
 - Priority-aware queues
 - Scheduled job enqueueing
+- Basic multi-worker execution
+- Per-job-type concurrency limits
 - Demo flow from `main.go`
 
 ---
@@ -256,9 +276,9 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next major phase should focus on per-job-type concurrency limits:
+The next major phase should focus on protecting execution across multiple application instances:
 
-- Limit how many jobs of one type can run at once
-- Start with simple limits such as 1 deployment job at a time
-- Keep the worker code readable before adding multiple workers
-- Keep the code simple enough to trace from `main.go`
+- Add a distributed lock abstraction
+- Add idempotency keys to prevent the same logical job from running twice
+- Keep an in-memory implementation first so the behavior remains easy to understand
+- Decide on Redis or PostgreSQL only after the locking flow is clear

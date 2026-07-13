@@ -13,6 +13,7 @@ type Worker struct {
 	MediumQueue chan int
 	LowQueue    chan int
 	RetryDelay  time.Duration
+	TypeLimits  map[JobType]chan struct{}
 }
 
 func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
@@ -23,7 +24,16 @@ func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
 		MediumQueue: make(chan int, 100),
 		LowQueue:    make(chan int, 100),
 		RetryDelay:  300 * time.Millisecond,
+		TypeLimits:  make(map[JobType]chan struct{}),
 	}
+}
+
+func (w *Worker) SetConcurrencyLimit(jobType JobType, limit int) {
+	if limit < 1 {
+		return
+	}
+
+	w.TypeLimits[jobType] = make(chan struct{}, limit)
 }
 
 func (w *Worker) Enqueue(job Job) {
@@ -40,12 +50,12 @@ func (w *Worker) Enqueue(job Job) {
 	}
 }
 
-func (w *Worker) Start() {
-	log.Println("worker started")
+func (w *Worker) Start(workerID int) {
+	log.Println("worker started", workerID)
 
 	for {
 		jobID := w.nextJob()
-		w.Process(context.Background(), jobID)
+		w.Process(context.Background(), workerID, jobID)
 	}
 }
 
@@ -80,19 +90,22 @@ func (w *Worker) nextJob() int {
 	}
 }
 
-func (w *Worker) Process(ctx context.Context, jobID int) {
+func (w *Worker) Process(ctx context.Context, workerID int, jobID int) {
 	job, exists := w.Repo.Get(jobID)
 	if !exists {
 		log.Println("job not found:", jobID)
 		return
 	}
 
+	w.acquireTypeSlot(workerID, job)
+	defer w.releaseTypeSlot(job)
+
 	job.Enqueued = false
 	job.Status = JobStatusRunning
 	job.Attempts++
 	w.Repo.Save(job)
 
-	log.Println("processing job", job.ID, "type:", job.Type, "priority:", job.Priority, "attempt:", job.Attempts)
+	log.Println("worker", workerID, "processing job", job.ID, "type:", job.Type, "priority:", job.Priority, "attempt:", job.Attempts)
 
 	err := w.Dispatcher.Run(ctx, job)
 
@@ -106,7 +119,27 @@ func (w *Worker) Process(ctx context.Context, jobID int) {
 	job.Error = ""
 	w.Repo.Save(job)
 
-	log.Println("job completed", job.ID)
+	log.Println("worker", workerID, "completed job", job.ID)
+}
+
+func (w *Worker) acquireTypeSlot(workerID int, job Job) {
+	limit, exists := w.TypeLimits[job.Type]
+	if !exists {
+		return
+	}
+
+	log.Println("worker", workerID, "waiting for", job.Type, "slot for job", job.ID)
+	limit <- struct{}{}
+	log.Println("worker", workerID, "acquired", job.Type, "slot for job", job.ID)
+}
+
+func (w *Worker) releaseTypeSlot(job Job) {
+	limit, exists := w.TypeLimits[job.Type]
+	if !exists {
+		return
+	}
+
+	<-limit
 }
 
 func (w *Worker) handleFailedJob(job Job, err error) {

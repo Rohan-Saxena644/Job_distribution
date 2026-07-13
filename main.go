@@ -19,6 +19,7 @@ func main() {
 	service := jobs.NewService(repo, worker)
 
 	jobs.RegisterSampleHandlers(dispatcher)
+	worker.SetConcurrencyLimit(jobs.JobType("deployment"), 1)
 
 	deploymentJob := service.SubmitJob(jobs.SubmitJobInput{
 		Type:     jobs.JobType("deployment"),
@@ -28,6 +29,15 @@ func main() {
 			"version": "v1.0.0",
 		},
 		MaxRetries: 1,
+	})
+
+	secondDeploymentJob := service.SubmitJob(jobs.SubmitJobInput{
+		Type:     jobs.JobType("deployment"),
+		Priority: jobs.JobPriorityLow,
+		Payload: map[string]string{
+			"service": "orders-api",
+			"version": "v2.1.0",
+		},
 	})
 
 	emailJob := service.SubmitJob(jobs.SubmitJobInput{
@@ -52,9 +62,11 @@ func main() {
 		MaxRetries: 2,
 	})
 
-	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID, webhookJob.ID)
+	log.Println("submitted jobs:", emailJob.ID, deploymentJob.ID, secondDeploymentJob.ID, webhookJob.ID)
 
-	go worker.Start()
+	for workerID := 1; workerID <= 3; workerID++ {
+		go worker.Start(workerID)
+	}
 	go scheduler.Start()
 
 	time.Sleep(3 * time.Second)
