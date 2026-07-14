@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: jobs
+      POSTGRES_USER: jobs
+      POSTGRES_PASSWORD: jobs
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobs -d jobs"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: jobs
+      RABBITMQ_DEFAULT_PASS: jobs
+    ports:
+      - "15673:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build: .
+    environment:
+      APP_MODE: worker
+      DATABASE_URL: postgres://jobs:jobs@postgres:5432/jobs?sslmode=disable
+      RABBITMQ_URL: amqp://jobs:jobs@rabbitmq:5672/
+      JOB_QUEUE_NAME: jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  producer:
+    build: .
+    profiles: ["tools"]
+    environment:
+      APP_MODE: producer
+      DATABASE_URL: postgres://jobs:jobs@postgres:5432/jobs?sslmode=disable
+      RABBITMQ_URL: amqp://jobs:jobs@rabbitmq:5672/
+      JOB_QUEUE_NAME: jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

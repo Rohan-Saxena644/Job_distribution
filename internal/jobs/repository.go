@@ -1,9 +1,22 @@
 package jobs
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"time"
 )
+
+var ErrJobNotFound = errors.New("job not found")
+
+type JobRepository interface {
+	Create(ctx context.Context, job Job) (Job, error)
+	Get(ctx context.Context, id int) (Job, error)
+	Save(ctx context.Context, job Job) error
+	List(ctx context.Context) ([]Job, error)
+	DueScheduledJobs(ctx context.Context, now time.Time) ([]Job, error)
+	Close()
+}
 
 type Repository struct {
 	mu     sync.Mutex
@@ -18,7 +31,7 @@ func NewRepository() *Repository {
 	}
 }
 
-func (r *Repository) Create(job Job) Job {
+func (r *Repository) Create(ctx context.Context, job Job) (Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -33,30 +46,35 @@ func (r *Repository) Create(job Job) Job {
 	r.jobs[job.ID] = job
 	r.order = append(r.order, job.ID)
 
-	return job
+	return job, nil
 }
 
-func (r *Repository) Get(id int) (Job, bool) {
+func (r *Repository) Get(ctx context.Context, id int) (Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	job, exists := r.jobs[id]
 	if !exists {
-		return Job{}, false
+		return Job{}, ErrJobNotFound
 	}
 
-	return job, true
+	return job, nil
 }
 
-func (r *Repository) Save(job Job) {
+func (r *Repository) Save(ctx context.Context, job Job) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if _, exists := r.jobs[job.ID]; !exists {
+		return ErrJobNotFound
+	}
+
 	job.UpdatedAt = time.Now()
 	r.jobs[job.ID] = job
+	return nil
 }
 
-func (r *Repository) List() []Job {
+func (r *Repository) List(ctx context.Context) ([]Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -65,10 +83,10 @@ func (r *Repository) List() []Job {
 		jobs = append(jobs, r.jobs[id])
 	}
 
-	return jobs
+	return jobs, nil
 }
 
-func (r *Repository) DueScheduledJobs(now time.Time) []Job {
+func (r *Repository) DueScheduledJobs(ctx context.Context, now time.Time) ([]Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -76,24 +94,18 @@ func (r *Repository) DueScheduledJobs(now time.Time) []Job {
 	for _, id := range r.order {
 		job := r.jobs[id]
 
-		if job.Status != JobStatusQueued {
+		if job.Status != JobStatusQueued || job.Enqueued {
 			continue
 		}
 
-		if job.Enqueued {
-			continue
-		}
-
-		if job.ScheduledAt == nil {
-			continue
-		}
-
-		if job.ScheduledAt.After(now) {
+		if job.ScheduledAt == nil || job.ScheduledAt.After(now) {
 			continue
 		}
 
 		jobs = append(jobs, job)
 	}
 
-	return jobs
+	return jobs, nil
 }
+
+func (r *Repository) Close() {}

@@ -1,20 +1,23 @@
 package jobs
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Service struct {
-	Repo   *Repository
+	Repo   JobRepository
 	Worker *Worker
 }
 
-func NewService(repo *Repository, worker *Worker) *Service {
+func NewService(repo JobRepository, worker *Worker) *Service {
 	return &Service{
 		Repo:   repo,
 		Worker: worker,
 	}
 }
 
-func (s *Service) SubmitJob(input SubmitJobInput) Job {
+func (s *Service) SubmitJob(ctx context.Context, input SubmitJobInput) (Job, error) {
 	if input.Priority == "" {
 		input.Priority = JobPriorityMedium
 	}
@@ -31,15 +34,20 @@ func (s *Service) SubmitJob(input SubmitJobInput) Job {
 		MaxRetries:  input.MaxRetries,
 	}
 
-	job = s.Repo.Create(job)
-
-	if job.ScheduledAt == nil || !job.ScheduledAt.After(time.Now()) {
-		s.Worker.Enqueue(job)
+	job, err := s.Repo.Create(ctx, job)
+	if err != nil {
+		return Job{}, err
 	}
 
-	return job
+	if job.ScheduledAt == nil || !job.ScheduledAt.After(time.Now()) {
+		if err := s.Worker.Enqueue(ctx, job); err != nil {
+			return Job{}, err
+		}
+	}
+
+	return job, nil
 }
 
-func (s *Service) ListJobs() []Job {
-	return s.Repo.List()
+func (s *Service) ListJobs(ctx context.Context) ([]Job, error) {
+	return s.Repo.List(ctx)
 }

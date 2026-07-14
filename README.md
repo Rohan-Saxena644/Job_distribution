@@ -28,9 +28,11 @@ New job types should be added by registering handlers, without changing the core
 
 ---
 
-## Current and Target Architecture
+## Architecture
 
-The project is already event-driven inside one Go process:
+The project supports two implementations of the same workflow.
+
+The default mode stays simple and runs inside one Go process:
 
 ```text
 Service -> priority channels -> workers -> dispatcher -> handler
@@ -38,7 +40,7 @@ Service -> priority channels -> workers -> dispatcher -> handler
 
 The high, medium, and low Go channels act as the current in-memory message queues. Workers wait for job IDs and react when work arrives. This is useful for learning and local development, but the channels cannot deliver jobs to workers running in another application instance and their contents disappear when the process stops.
 
-The target architecture will keep the same job model and execution flow while making storage and transport replaceable:
+The distributed mode keeps the same job model and execution flow while replacing storage and transport:
 
 ```text
 Service/Scheduler -> Job Repository -> Job Queue -> Worker
@@ -52,18 +54,18 @@ Service/Scheduler -> Job Repository -> Job Queue -> Worker
 Worker -> job events -> Redis Pub/Sub -> dashboards and notifications
 ```
 
-Planned responsibilities:
+Responsibilities:
 
 - The existing Go channels remain the default in-memory queue for development and tests.
-- The current repository remains available for local development, while PostgreSQL later provides job data shared by separate processes.
-- RabbitMQ becomes the durable job transport for production workers, with manual acknowledgements after processing.
+- The current repository remains available for local development, while PostgreSQL provides job data shared by separate processes.
+- RabbitMQ provides the durable job transport for separate workers, with publisher confirms and manual acknowledgements.
 - Redis Pub/Sub broadcasts live events such as `job.started`, `job.completed`, and `job.failed`.
 - Redis Pub/Sub will not be the main job queue because messages can be lost while a worker is disconnected.
 - Redis can later also support distributed locks and idempotency keys, which are separate from Pub/Sub.
 
 This direction does not require a full rewrite. The service, scheduler, dispatcher, handlers, job statuses, and concurrency limits remain useful. Small repository and queue interfaces will isolate the in-memory and production implementations from the rest of the project.
 
-RabbitMQ messages can then contain a job ID because every producer and worker can load the same job from PostgreSQL. Sending only an ID before shared persistence exists would not work across processes.
+RabbitMQ messages contain a job ID because every producer and worker can load the complete job from PostgreSQL.
 
 The project currently has retry and dead-letter handling with one fixed delay. Exponential backoff and jitter are valuable later, but retry scheduling must first survive application restarts. gRPC is optional and is not part of the core worker architecture; it should only be added if separate internal services need a strongly typed job-submission API.
 
@@ -71,7 +73,7 @@ The project currently has retry and dead-letter handling with one fixed delay. E
 
 ## Current Status
 
-The repository now has the first working in-memory version:
+The repository now has both a working in-memory mode and the first distributed mode:
 
 - Phase 0 is complete
 - Phase 1 is complete for in-memory job submission
@@ -82,8 +84,65 @@ The repository now has the first working in-memory version:
 - Phase 6 is complete for simple scheduled job enqueueing
 - Phase 7 is complete for a basic worker pool and per-job-type concurrency limits
 - Phase 8 is complete for the in-memory queue abstraction
+- Phase 9 is complete for PostgreSQL persistence
+- Phase 10 is complete for RabbitMQ job transport
 
-The demo runs three workers, while limiting deployment jobs to one active execution at a time.
+The distributed demo runs the producer and worker as separate containers while sharing PostgreSQL and RabbitMQ.
+
+---
+
+## Running The Project
+
+### Simple In-Memory Demo
+
+No external services are required:
+
+```powershell
+go run .
+```
+
+This uses `APP_MODE=demo`, submits the sample jobs, runs three workers for three seconds, and prints their final states.
+
+### Distributed Demo
+
+Start PostgreSQL, RabbitMQ, and the long-running worker:
+
+```powershell
+docker compose up -d --build postgres rabbitmq worker
+```
+
+Run a separate producer that submits the sample jobs and exits:
+
+```powershell
+docker compose --profile tools run --rm producer
+```
+
+Follow the worker processing jobs received through RabbitMQ:
+
+```powershell
+docker compose logs -f worker
+```
+
+Inspect persisted job states directly in PostgreSQL:
+
+```powershell
+docker compose exec postgres psql -U jobs -d jobs -c "SELECT id, type, priority, status, attempts FROM jobs ORDER BY id;"
+```
+
+RabbitMQ Management is available at `http://localhost:15673` with username `jobs` and password `jobs`.
+
+Stop the local services when finished:
+
+```powershell
+docker compose down
+```
+
+Runtime modes:
+
+- `APP_MODE=demo` submits and processes jobs in one process, then prints their states.
+- `APP_MODE=producer` submits sample jobs and exits.
+- `APP_MODE=worker` runs the worker pool and scheduler until the process is stopped.
+- Leave `DATABASE_URL` and `RABBITMQ_URL` empty for in-memory mode, or set both to enable distributed mode.
 
 ---
 
@@ -269,7 +328,7 @@ Deliverable:
 
 ### Phase 9 - Persistent Job Repository
 
-Status: planned.
+Status: complete for the PostgreSQL version.
 
 Goal: make job state available to producers and workers running in separate processes.
 
@@ -286,7 +345,7 @@ Deliverable:
 
 ### Phase 10 - RabbitMQ Job Transport
 
-Status: planned.
+Status: complete for the first distributed version.
 
 Goal: allow workers in different application instances to consume durable jobs.
 
@@ -359,7 +418,9 @@ For the first iteration, the layout is intentionally small:
       repository.go
       dispatcher.go
       handlers.go
+      postgres.go
       queue.go
+      rabbitmq.go
       scheduler.go
       service.go
       worker.go
@@ -387,6 +448,11 @@ The first vertical slice now includes:
 - Basic multi-worker execution
 - Per-job-type concurrency limits
 - Replaceable queue interface with an in-memory priority queue
+- Replaceable repository interface with PostgreSQL persistence
+- RabbitMQ priority queue with persistent messages and publisher confirms
+- Manual acknowledgements, negative acknowledgements, and consumer prefetch
+- Separate `producer` and `worker` runtime modes
+- Docker Compose development environment
 - Demo flow from `main.go`
 
 ---
@@ -406,11 +472,12 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next phase should introduce a repository abstraction and shared persistence:
+The next phase should make retry scheduling durable:
 
-- Define a repository interface from the operations already used by the application
-- Keep the current in-memory repository implementation
-- Add PostgreSQL without changing the service, scheduler, or worker behavior
-- Store shared job state before RabbitMQ carries job IDs between processes
+- Replace the fixed retry delay with exponential backoff
+- Add a small amount of jitter to spread retries
+- Store the next retry time in PostgreSQL
+- Let the scheduler recover retries after a worker restart
+- Preserve the existing maximum retry and dead-letter behavior
 
-RabbitMQ, Redis, and advanced backoff should be added one boundary at a time. This keeps the code understandable and prevents external infrastructure from becoming mixed into the worker and handler logic. gRPC remains optional because it does not improve the core job execution path by itself.
+Redis events and distributed idempotency remain later improvements. gRPC stays optional because it does not improve the core job execution path by itself.

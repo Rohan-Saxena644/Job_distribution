@@ -1,17 +1,18 @@
 package jobs
 
 import (
+	"context"
 	"log"
 	"time"
 )
 
 type Scheduler struct {
-	Repo     *Repository
+	Repo     JobRepository
 	Worker   *Worker
 	Interval time.Duration
 }
 
-func NewScheduler(repo *Repository, worker *Worker) *Scheduler {
+func NewScheduler(repo JobRepository, worker *Worker) *Scheduler {
 	return &Scheduler{
 		Repo:     repo,
 		Worker:   worker,
@@ -19,22 +20,36 @@ func NewScheduler(repo *Repository, worker *Worker) *Scheduler {
 	}
 }
 
-func (s *Scheduler) Start() {
+func (s *Scheduler) Start(ctx context.Context) {
 	log.Println("scheduler started")
 
 	ticker := time.NewTicker(s.Interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		s.EnqueueDueJobs()
+	for {
+		select {
+		case <-ticker.C:
+			if err := s.EnqueueDueJobs(ctx); err != nil {
+				log.Println("scheduler error:", err)
+			}
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
-func (s *Scheduler) EnqueueDueJobs() {
-	dueJobs := s.Repo.DueScheduledJobs(time.Now())
+func (s *Scheduler) EnqueueDueJobs(ctx context.Context) error {
+	dueJobs, err := s.Repo.DueScheduledJobs(ctx, time.Now())
+	if err != nil {
+		return err
+	}
 
 	for _, job := range dueJobs {
 		log.Println("scheduled job is ready", job.ID, "type:", job.Type)
-		s.Worker.Enqueue(job)
+		if err := s.Worker.Enqueue(ctx, job); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
