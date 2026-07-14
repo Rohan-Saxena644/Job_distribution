@@ -1,0 +1,9 @@
+# Local build output
+job-distributed
+job-distributed.exe
+*.log
+
+# Local environment files
+.env
+.env.*
+!.env.example

@@ -12,6 +12,7 @@ type Worker struct {
 	Repo       JobRepository
 	Dispatcher *Dispatcher
 	Queue      JobQueue
+	Events     EventPublisher
 	RetryBase  time.Duration
 	RetryMax   time.Duration
 	TypeLimits map[JobType]chan struct{}
@@ -22,10 +23,15 @@ func NewWorker(repo JobRepository, dispatcher *Dispatcher, queue JobQueue) *Work
 		Repo:       repo,
 		Dispatcher: dispatcher,
 		Queue:      queue,
+		Events:     &NoopEventPublisher{},
 		RetryBase:  time.Second,
 		RetryMax:   30 * time.Second,
 		TypeLimits: make(map[JobType]chan struct{}),
 	}
+}
+
+func (w *Worker) SetEventPublisher(publisher EventPublisher) {
+	w.Events = publisher
 }
 
 func (w *Worker) SetConcurrencyLimit(jobType JobType, limit int) {
@@ -108,6 +114,7 @@ func (w *Worker) Process(ctx context.Context, workerID int, jobID int) error {
 	if err := w.Repo.Save(ctx, job); err != nil {
 		return err
 	}
+	w.publishEvent(ctx, "job.started", job)
 
 	log.Println("worker", workerID, "processing job", job.ID, "type:", job.Type, "priority:", job.Priority, "attempt:", job.Attempts)
 
@@ -122,6 +129,7 @@ func (w *Worker) Process(ctx context.Context, workerID int, jobID int) error {
 	if err := w.Repo.Save(ctx, job); err != nil {
 		return err
 	}
+	w.publishEvent(ctx, "job.completed", job)
 
 	log.Println("worker", workerID, "completed job", job.ID)
 	return nil
@@ -157,6 +165,7 @@ func (w *Worker) handleFailedJob(ctx context.Context, job Job, handlerErr error)
 		if err := w.Repo.Save(ctx, job); err != nil {
 			return err
 		}
+		w.publishEvent(ctx, "job.failed", job)
 
 		log.Println("job failed", job.ID, handlerErr)
 		log.Println("retry scheduled for job", job.ID, "after", delay)
@@ -169,6 +178,7 @@ func (w *Worker) handleFailedJob(ctx context.Context, job Job, handlerErr error)
 	if err := w.Repo.Save(ctx, job); err != nil {
 		return err
 	}
+	w.publishEvent(ctx, "job.dead_lettered", job)
 
 	log.Println("job moved to dead letter", job.ID, handlerErr)
 	return nil
@@ -196,4 +206,20 @@ func (w *Worker) retryDelay(attempt int) time.Duration {
 	}
 
 	return delay
+}
+
+func (w *Worker) publishEvent(ctx context.Context, name string, job Job) {
+	event := JobEvent{
+		Name:       name,
+		JobID:      job.ID,
+		Type:       job.Type,
+		Status:     job.Status,
+		Attempts:   job.Attempts,
+		Error:      job.Error,
+		OccurredAt: time.Now(),
+	}
+
+	if err := w.Events.Publish(ctx, event); err != nil {
+		log.Println("could not publish", name, "for job", job.ID, err)
+	}
 }

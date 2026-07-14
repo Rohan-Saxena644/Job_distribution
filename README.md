@@ -19,8 +19,10 @@ The original phase-by-phase development notes are preserved in [JOURNEY.txt](JOU
 - PostgreSQL job persistence
 - RabbitMQ persistent messages and publisher confirms
 - Manual RabbitMQ acknowledgements and requeueing
+- Redis Pub/Sub lifecycle events
+- gRPC job-submission API
 - In-memory repository and queue for local development
-- Separate demo, producer, and worker runtime modes
+- Separate demo, producer, worker, API, and gRPC client modes
 - Docker and Docker Compose support
 
 ## Architecture
@@ -38,7 +40,9 @@ This mode requires no external services. Jobs and queue contents are lost when t
 ### Distributed Mode
 
 ```text
-Producer
+gRPC Client -> gRPC API -> Service
+                            |
+Producer -------------------+
    |
    +-> PostgreSQL stores the complete job
    |
@@ -52,12 +56,13 @@ Producer
                          +-> handler executes work
                          +-> final status is saved
                          +-> RabbitMQ delivery is acknowledged
+                         +-> Redis publishes lifecycle events
 
 Scheduler -> finds scheduled jobs and retries in PostgreSQL
           -> returns due jobs to RabbitMQ
 ```
 
-RabbitMQ transports only job IDs. PostgreSQL is the shared source of truth for the complete job and its status.
+RabbitMQ transports only job IDs. PostgreSQL is the shared source of truth for the complete job and its status. Redis broadcasts live events but is not used for durable job delivery.
 
 ## Job Lifecycle
 
@@ -86,8 +91,11 @@ Retry times are stored in PostgreSQL. This allows the scheduler to recover pendi
 - Go 1.26
 - PostgreSQL 17
 - RabbitMQ 4
+- Redis 7
+- gRPC and Protocol Buffers
 - `pgx` PostgreSQL driver
 - `amqp091-go` RabbitMQ client
+- `go-redis` Redis client
 - Docker and Docker Compose
 
 ## Project Structure
@@ -97,6 +105,8 @@ Retry times are stored in PostgreSQL. This allows the scheduler to recover pendi
 |-- main.go
 |-- Dockerfile
 |-- compose.yaml
+|-- api/
+|   `-- jobs.proto
 |-- internal/
 |   `-- jobs/
 |       |-- model.go
@@ -104,6 +114,8 @@ Retry times are stored in PostgreSQL. This allows the scheduler to recover pendi
 |       |-- worker.go
 |       |-- scheduler.go
 |       |-- dispatcher.go
+|       |-- events.go
+|       |-- grpc.go
 |       |-- handlers.go
 |       |-- repository.go
 |       |-- postgres.go
@@ -137,16 +149,28 @@ The demo submits sample jobs, starts three workers, waits for scheduled work and
 
 ### Distributed Demo
 
-Start PostgreSQL, RabbitMQ, and the worker:
+Start PostgreSQL, RabbitMQ, Redis, the worker, and the gRPC API:
 
 ```powershell
-docker compose up -d --build postgres rabbitmq worker
+docker compose up -d --build postgres rabbitmq redis worker api
 ```
 
 Submit sample jobs from a separate producer container:
 
 ```powershell
 docker compose --profile tools run --rm producer
+```
+
+Submit an email job through gRPC:
+
+```powershell
+docker compose --profile tools run --rm grpc-client
+```
+
+Watch live Redis lifecycle events in another terminal before submitting jobs:
+
+```powershell
+docker compose exec redis redis-cli SUBSCRIBE job.events
 ```
 
 Follow the worker logs:
@@ -183,6 +207,8 @@ The PostgreSQL Docker volume is preserved when the services are stopped.
 | `demo` | Submits and processes sample jobs in one process, then exits. |
 | `producer` | Submits sample jobs and exits. |
 | `worker` | Runs the worker pool and scheduler continuously. |
+| `api` | Runs the gRPC job-submission API. |
+| `grpc-client` | Submits one sample email job through gRPC and exits. |
 
 `demo` is used when `APP_MODE` is not provided.
 
@@ -190,12 +216,51 @@ The PostgreSQL Docker volume is preserved when the services are stopped.
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `APP_MODE` | No | `demo`, `producer`, or `worker`. Defaults to `demo`. |
+| `APP_MODE` | No | `demo`, `producer`, `worker`, `api`, or `grpc-client`. Defaults to `demo`. |
 | `DATABASE_URL` | Distributed mode | PostgreSQL connection URL. |
 | `RABBITMQ_URL` | Distributed mode | RabbitMQ AMQP connection URL. |
 | `JOB_QUEUE_NAME` | No | RabbitMQ queue name. Defaults to `jobs`. |
+| `REDIS_URL` | No | Redis connection URL. Enables lifecycle event publishing. |
+| `EVENT_CHANNEL` | No | Redis Pub/Sub channel. Defaults to `job.events`. |
+| `GRPC_ADDRESS` | API/client mode | Address the gRPC server listens on or the client connects to. |
 
 `DATABASE_URL` and `RABBITMQ_URL` must either both be set or both be empty. Leaving both empty selects the in-memory implementations.
+
+## gRPC API
+
+The API contract is documented in [`api/jobs.proto`](api/jobs.proto). It exposes one method:
+
+```text
+jobs.v1.JobService/SubmitJob
+```
+
+The request is a protobuf `Struct` with these fields:
+
+```json
+{
+  "type": "email",
+  "payload": {
+    "to": "user@example.com",
+    "subject": "Hello"
+  },
+  "priority": "high",
+  "max_retries": 2,
+  "scheduled_at": "2026-07-14T18:00:00Z"
+}
+```
+
+`scheduled_at` is optional and uses RFC3339 format. The included `grpc-client` mode demonstrates a complete client call without requiring another command-line tool.
+
+## Redis Events
+
+Workers publish JSON events after durable status updates:
+
+- `job.started`
+- `job.completed`
+- `job.failed`
+- `job.dead_lettered`
+
+Redis Pub/Sub is intended for live dashboards, notifications, and monitoring. Subscribers that are offline can miss events, so PostgreSQL remains the durable source of truth.
 
 ## Sample Jobs
 
@@ -241,7 +306,7 @@ Build the worker image:
 docker build -t job-distributed:latest .
 ```
 
-The image starts the binary defined in the `Dockerfile`. Set `APP_MODE=worker` when running it as a long-lived worker service.
+The image starts the binary defined in the `Dockerfile`. Run it with `APP_MODE=worker` for job processing or `APP_MODE=api` for gRPC submission.
 
 ### Single-Server Deployment
 
@@ -260,32 +325,36 @@ The credentials in the repository are only for local development. Do not use the
 
 For a production-style deployment:
 
-1. Provision PostgreSQL and RabbitMQ, preferably as private or managed services.
+1. Provision PostgreSQL, RabbitMQ, and optionally Redis, preferably as private or managed services.
 2. Build and publish the Docker image to a container registry.
-3. Deploy one or more copies of the image with `APP_MODE=worker`.
-4. Provide `DATABASE_URL`, `RABBITMQ_URL`, and `JOB_QUEUE_NAME` as secrets or environment variables.
-5. Keep PostgreSQL and RabbitMQ private rather than exposing them directly to the internet.
+3. Deploy one copy of the image with `APP_MODE=worker` for the current MVP.
+4. Deploy the image with `APP_MODE=api` when external services need gRPC submission.
+5. Provide database, broker, Redis, and gRPC configuration as secrets or environment variables.
+6. Keep PostgreSQL, RabbitMQ, and Redis private rather than exposing them directly to the internet.
 
-The worker is a background service and does not expose an HTTP port. There is no website or public API in the current version.
+The worker does not expose a port. The API container exposes gRPC on port `50051`; it does not provide a website or HTTP/JSON API.
 
 ## Current Limitations
 
 - The producer mode submits fixed demonstration jobs.
-- There is no HTTP or gRPC submission API yet.
-- Redis events and distributed idempotency are not implemented.
+- The gRPC API currently exposes only job submission.
+- Redis Pub/Sub events are live notifications and are not replayable.
+- Run a single worker service. Multiple worker replicas require atomic job claiming and idempotency to avoid duplicate work.
 - The sample handlers simulate work rather than calling real external services.
+- The gRPC endpoint does not yet include authentication or TLS.
 - RabbitMQ connection recovery and production observability still need hardening.
 - The automatic PostgreSQL schema setup is convenient for the MVP but is not a full migration system.
 
 ## Possible Extensions
 
-- Redis lifecycle events
 - Distributed locks and idempotency keys
-- HTTP or gRPC job-submission API
+- Additional gRPC methods for getting and listing jobs
+- Generated typed protobuf clients
+- HTTP/JSON gateway
 - Structured logging and metrics
 - Authentication and authorization
 - Production database migrations
 
 ## Project Status
 
-The core distributed job-processing MVP is complete and ready to demonstrate. Production deployment should add secure secret management, idempotency, observability, automated integration tests, and connection recovery.
+The distributed job-processing MVP now includes PostgreSQL, RabbitMQ, Redis lifecycle events, and gRPC submission. Production deployment should add secure secret management, authentication, TLS, idempotency, observability, automated integration tests, and connection recovery.

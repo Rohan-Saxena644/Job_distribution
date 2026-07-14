@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package jobs.v1;
+
+import "google/protobuf/struct.proto";
+
+service JobService {
+  rpc SubmitJob(google.protobuf.Struct) returns (google.protobuf.Struct);
+}

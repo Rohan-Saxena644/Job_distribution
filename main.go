@@ -26,6 +26,11 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	mode := os.Getenv("APP_MODE")
+	if mode == "grpc-client" {
+		return runGRPCClient(ctx)
+	}
+
 	repo, queue, err := buildStorage(ctx)
 	if err != nil {
 		return err
@@ -37,11 +42,16 @@ func run() error {
 	worker := jobs.NewWorker(repo, dispatcher, queue)
 	scheduler := jobs.NewScheduler(repo, worker)
 	service := jobs.NewService(repo, worker)
+	events, err := buildEventPublisher(ctx)
+	if err != nil {
+		return err
+	}
+	defer events.Close()
+	worker.SetEventPublisher(events)
 
 	jobs.RegisterSampleHandlers(dispatcher)
 	worker.SetConcurrencyLimit(jobs.JobType("deployment"), 1)
 
-	mode := os.Getenv("APP_MODE")
 	if mode == "" {
 		mode = "demo"
 	}
@@ -53,8 +63,10 @@ func run() error {
 		return runProducer(ctx, service)
 	case "worker":
 		return runWorker(ctx, worker, scheduler)
+	case "api":
+		return runGRPCAPI(ctx, service)
 	default:
-		return fmt.Errorf("unknown APP_MODE %q: use demo, producer, or worker", mode)
+		return fmt.Errorf("unknown APP_MODE %q: use demo, producer, worker, api, or grpc-client", mode)
 	}
 }
 
@@ -91,6 +103,26 @@ func buildStorage(ctx context.Context) (jobs.JobRepository, jobs.JobQueue, error
 	return repo, queue, nil
 }
 
+func buildEventPublisher(ctx context.Context) (jobs.EventPublisher, error) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		return &jobs.NoopEventPublisher{}, nil
+	}
+
+	channel := os.Getenv("EVENT_CHANNEL")
+	if channel == "" {
+		channel = "job.events"
+	}
+
+	publisher, err := jobs.NewRedisEventPublisher(ctx, redisURL, channel)
+	if err != nil {
+		return nil, fmt.Errorf("connect to redis: %w", err)
+	}
+
+	log.Println("publishing job events to Redis channel", channel)
+	return publisher, nil
+}
+
 func runDemo(ctx context.Context, service *jobs.Service, worker *jobs.Worker, scheduler *jobs.Scheduler) error {
 	submittedJobs, err := submitSampleJobs(ctx, service)
 	if err != nil {
@@ -125,6 +157,38 @@ func runWorker(ctx context.Context, worker *jobs.Worker, scheduler *jobs.Schedul
 
 	<-ctx.Done()
 	log.Println("worker service is stopping")
+	return nil
+}
+
+func runGRPCAPI(ctx context.Context, service *jobs.Service) error {
+	address := os.Getenv("GRPC_ADDRESS")
+	if address == "" {
+		address = ":50051"
+	}
+
+	return jobs.StartGRPCServer(ctx, address, service)
+}
+
+func runGRPCClient(ctx context.Context) error {
+	address := os.Getenv("GRPC_ADDRESS")
+	if address == "" {
+		address = "localhost:50051"
+	}
+
+	job, err := jobs.SubmitJobGRPC(ctx, address, jobs.SubmitJobInput{
+		Type:     jobs.JobType("email"),
+		Priority: jobs.JobPriorityHigh,
+		Payload: map[string]string{
+			"to":      "grpc@example.com",
+			"subject": "Submitted through gRPC",
+		},
+		MaxRetries: 2,
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Println("gRPC submitted job", job.ID, "type:", job.Type, "status:", job.Status)
 	return nil
 }
 
