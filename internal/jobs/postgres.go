@@ -44,6 +44,7 @@ func (r *PostgresRepository) createSchema(ctx context.Context) error {
 			status TEXT NOT NULL,
 			priority TEXT NOT NULL,
 			scheduled_at TIMESTAMPTZ,
+			next_retry_at TIMESTAMPTZ,
 			enqueued BOOLEAN NOT NULL DEFAULT FALSE,
 			max_retries INTEGER NOT NULL DEFAULT 0,
 			attempts INTEGER NOT NULL DEFAULT 0,
@@ -57,9 +58,26 @@ func (r *PostgresRepository) createSchema(ctx context.Context) error {
 	}
 
 	_, err = r.pool.Exec(ctx, `
+		ALTER TABLE jobs
+		ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.pool.Exec(ctx, `
 		CREATE INDEX IF NOT EXISTS jobs_due_scheduled_idx
 		ON jobs (scheduled_at)
 		WHERE status = 'queued' AND enqueued = FALSE
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.pool.Exec(ctx, `
+		CREATE INDEX IF NOT EXISTS jobs_due_retry_idx
+		ON jobs (next_retry_at)
+		WHERE status = 'failed' AND enqueued = FALSE
 	`)
 	return err
 }
@@ -77,10 +95,10 @@ func (r *PostgresRepository) Create(ctx context.Context, job Job) (Job, error) {
 
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO jobs (
-			type, payload, status, priority, scheduled_at, enqueued,
+			type, payload, status, priority, scheduled_at, next_retry_at, enqueued,
 			max_retries, attempts, error, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id
 	`,
 		job.Type,
@@ -88,6 +106,7 @@ func (r *PostgresRepository) Create(ctx context.Context, job Job) (Job, error) {
 		job.Status,
 		job.Priority,
 		job.ScheduledAt,
+		job.NextRetryAt,
 		job.Enqueued,
 		job.MaxRetries,
 		job.Attempts,
@@ -101,7 +120,7 @@ func (r *PostgresRepository) Create(ctx context.Context, job Job) (Job, error) {
 
 func (r *PostgresRepository) Get(ctx context.Context, id int) (Job, error) {
 	job, err := scanJob(r.pool.QueryRow(ctx, `
-		SELECT id, type, payload, status, priority, scheduled_at, enqueued,
+		SELECT id, type, payload, status, priority, scheduled_at, next_retry_at, enqueued,
 			max_retries, attempts, error, created_at, updated_at
 		FROM jobs
 		WHERE id = $1
@@ -127,11 +146,12 @@ func (r *PostgresRepository) Save(ctx context.Context, job Job) error {
 			status = $4,
 			priority = $5,
 			scheduled_at = $6,
-			enqueued = $7,
-			max_retries = $8,
-			attempts = $9,
-			error = $10,
-			updated_at = $11
+			next_retry_at = $7,
+			enqueued = $8,
+			max_retries = $9,
+			attempts = $10,
+			error = $11,
+			updated_at = $12
 		WHERE id = $1
 	`,
 		job.ID,
@@ -140,6 +160,7 @@ func (r *PostgresRepository) Save(ctx context.Context, job Job) error {
 		job.Status,
 		job.Priority,
 		job.ScheduledAt,
+		job.NextRetryAt,
 		job.Enqueued,
 		job.MaxRetries,
 		job.Attempts,
@@ -159,7 +180,7 @@ func (r *PostgresRepository) Save(ctx context.Context, job Job) error {
 
 func (r *PostgresRepository) List(ctx context.Context) ([]Job, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, type, payload, status, priority, scheduled_at, enqueued,
+		SELECT id, type, payload, status, priority, scheduled_at, next_retry_at, enqueued,
 			max_retries, attempts, error, created_at, updated_at
 		FROM jobs
 		ORDER BY id
@@ -181,17 +202,19 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Job, error) {
 	return jobs, rows.Err()
 }
 
-func (r *PostgresRepository) DueScheduledJobs(ctx context.Context, now time.Time) ([]Job, error) {
+func (r *PostgresRepository) DueJobs(ctx context.Context, now time.Time) ([]Job, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, type, payload, status, priority, scheduled_at, enqueued,
+		SELECT id, type, payload, status, priority, scheduled_at, next_retry_at, enqueued,
 			max_retries, attempts, error, created_at, updated_at
 		FROM jobs
-		WHERE status = $1
-			AND enqueued = FALSE
-			AND scheduled_at IS NOT NULL
-			AND scheduled_at <= $2
-		ORDER BY scheduled_at, id
-	`, JobStatusQueued, now)
+		WHERE enqueued = FALSE
+			AND (
+				(status = $1 AND scheduled_at IS NOT NULL AND scheduled_at <= $3)
+				OR
+				(status = $2 AND next_retry_at IS NOT NULL AND next_retry_at <= $3)
+			)
+		ORDER BY COALESCE(next_retry_at, scheduled_at), id
+	`, JobStatusQueued, JobStatusFailed, now)
 	if err != nil {
 		return nil, err
 	}
@@ -224,6 +247,7 @@ func scanJob(row rowScanner) (Job, error) {
 	var status string
 	var priority string
 	var scheduledAt sql.NullTime
+	var nextRetryAt sql.NullTime
 
 	err := row.Scan(
 		&job.ID,
@@ -232,6 +256,7 @@ func scanJob(row rowScanner) (Job, error) {
 		&status,
 		&priority,
 		&scheduledAt,
+		&nextRetryAt,
 		&job.Enqueued,
 		&job.MaxRetries,
 		&job.Attempts,
@@ -252,6 +277,9 @@ func scanJob(row rowScanner) (Job, error) {
 	job.Priority = JobPriority(priority)
 	if scheduledAt.Valid {
 		job.ScheduledAt = &scheduledAt.Time
+	}
+	if nextRetryAt.Valid {
+		job.NextRetryAt = &nextRetryAt.Time
 	}
 
 	return job, nil

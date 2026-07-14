@@ -67,7 +67,7 @@ This direction does not require a full rewrite. The service, scheduler, dispatch
 
 RabbitMQ messages contain a job ID because every producer and worker can load the complete job from PostgreSQL.
 
-The project currently has retry and dead-letter handling with one fixed delay. Exponential backoff and jitter are valuable later, but retry scheduling must first survive application restarts. gRPC is optional and is not part of the core worker architecture; it should only be added if separate internal services need a strongly typed job-submission API.
+The project stores retry times with each job. Retry delays grow exponentially with a small amount of jitter, and the scheduler recovers due retries after worker restarts. gRPC is optional and is not part of the core worker architecture; it should only be added if separate internal services need a strongly typed job-submission API.
 
 ---
 
@@ -86,8 +86,9 @@ The repository now has both a working in-memory mode and the first distributed m
 - Phase 8 is complete for the in-memory queue abstraction
 - Phase 9 is complete for PostgreSQL persistence
 - Phase 10 is complete for RabbitMQ job transport
+- Phase 11 is complete for durable retry and exponential backoff
 
-The distributed demo runs the producer and worker as separate containers while sharing PostgreSQL and RabbitMQ.
+The core project is complete. The distributed demo runs the producer and worker as separate containers while sharing PostgreSQL and RabbitMQ.
 
 ---
 
@@ -363,7 +364,7 @@ Deliverable:
 
 ### Phase 11 - Durable Retry and Backoff
 
-Status: planned.
+Status: complete.
 
 Goal: make retries survive process restarts and avoid repeatedly hitting a failing dependency.
 
@@ -378,9 +379,9 @@ Deliverable:
 
 - Failed jobs retry at increasing durable intervals and still reach the dead-letter state when exhausted
 
-### Phase 12 - Redis Events and Distributed Safety
+### Phase 12 - Optional Redis Extension
 
-Status: planned.
+Status: optional future learning phase.
 
 Goal: broadcast job lifecycle events and protect work across multiple instances.
 
@@ -453,6 +454,9 @@ The first vertical slice now includes:
 - Manual acknowledgements, negative acknowledgements, and consumer prefetch
 - Separate `producer` and `worker` runtime modes
 - Docker Compose development environment
+- Durable retry timestamps stored with jobs
+- Exponential backoff with jitter
+- Scheduler recovery of retries after restarts
 - Demo flow from `main.go`
 
 ---
@@ -472,12 +476,11 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next phase should make retry scheduling durable:
+The core job distribution project is complete. The remaining ideas are optional extensions rather than requirements for the main worker platform:
 
-- Replace the fixed retry delay with exponential backoff
-- Add a small amount of jitter to spread retries
-- Store the next retry time in PostgreSQL
-- Let the scheduler recover retries after a worker restart
-- Preserve the existing maximum retry and dead-letter behavior
+- Add Redis event publishing as a guided learning exercise
+- Add distributed idempotency before running many worker instances
+- Add an HTTP or gRPC submission API only when an external client needs one
+- Add metrics and structured logging before a production deployment
 
-Redis events and distributed idempotency remain later improvements. gRPC stays optional because it does not improve the core job execution path by itself.
+Redis and gRPC are intentionally not implemented in the core project so they can be added separately without making the current code harder to understand.

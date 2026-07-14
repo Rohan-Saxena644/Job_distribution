@@ -39,13 +39,18 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) EnqueueDueJobs(ctx context.Context) error {
-	dueJobs, err := s.Repo.DueScheduledJobs(ctx, time.Now())
+	dueJobs, err := s.Repo.DueJobs(ctx, time.Now())
 	if err != nil {
 		return err
 	}
 
 	for _, job := range dueJobs {
-		log.Println("scheduled job is ready", job.ID, "type:", job.Type)
+		if job.Status == JobStatusFailed {
+			log.Println("retry job is ready", job.ID, "type:", job.Type)
+		} else {
+			log.Println("scheduled job is ready", job.ID, "type:", job.Type)
+		}
+
 		if err := s.Worker.Enqueue(ctx, job); err != nil {
 			return err
 		}

@@ -14,7 +14,7 @@ type JobRepository interface {
 	Get(ctx context.Context, id int) (Job, error)
 	Save(ctx context.Context, job Job) error
 	List(ctx context.Context) ([]Job, error)
-	DueScheduledJobs(ctx context.Context, now time.Time) ([]Job, error)
+	DueJobs(ctx context.Context, now time.Time) ([]Job, error)
 	Close()
 }
 
@@ -86,7 +86,7 @@ func (r *Repository) List(ctx context.Context) ([]Job, error) {
 	return jobs, nil
 }
 
-func (r *Repository) DueScheduledJobs(ctx context.Context, now time.Time) ([]Job, error) {
+func (r *Repository) DueJobs(ctx context.Context, now time.Time) ([]Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -94,15 +94,17 @@ func (r *Repository) DueScheduledJobs(ctx context.Context, now time.Time) ([]Job
 	for _, id := range r.order {
 		job := r.jobs[id]
 
-		if job.Status != JobStatusQueued || job.Enqueued {
+		if job.Enqueued {
 			continue
 		}
 
-		if job.ScheduledAt == nil || job.ScheduledAt.After(now) {
-			continue
+		if job.Status == JobStatusQueued && job.ScheduledAt != nil && !job.ScheduledAt.After(now) {
+			jobs = append(jobs, job)
 		}
 
-		jobs = append(jobs, job)
+		if job.Status == JobStatusFailed && job.NextRetryAt != nil && !job.NextRetryAt.After(now) {
+			jobs = append(jobs, job)
+		}
 	}
 
 	return jobs, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math/rand"
 	"time"
 )
 
@@ -11,7 +12,8 @@ type Worker struct {
 	Repo       JobRepository
 	Dispatcher *Dispatcher
 	Queue      JobQueue
-	RetryDelay time.Duration
+	RetryBase  time.Duration
+	RetryMax   time.Duration
 	TypeLimits map[JobType]chan struct{}
 }
 
@@ -20,7 +22,8 @@ func NewWorker(repo JobRepository, dispatcher *Dispatcher, queue JobQueue) *Work
 		Repo:       repo,
 		Dispatcher: dispatcher,
 		Queue:      queue,
-		RetryDelay: 300 * time.Millisecond,
+		RetryBase:  time.Second,
+		RetryMax:   30 * time.Second,
 		TypeLimits: make(map[JobType]chan struct{}),
 	}
 }
@@ -100,6 +103,7 @@ func (w *Worker) Process(ctx context.Context, workerID int, jobID int) error {
 
 	job.Enqueued = false
 	job.Status = JobStatusRunning
+	job.NextRetryAt = nil
 	job.Attempts++
 	if err := w.Repo.Save(ctx, job); err != nil {
 		return err
@@ -114,6 +118,7 @@ func (w *Worker) Process(ctx context.Context, workerID int, jobID int) error {
 
 	job.Status = JobStatusCompleted
 	job.Error = ""
+	job.NextRetryAt = nil
 	if err := w.Repo.Save(ctx, job); err != nil {
 		return err
 	}
@@ -144,29 +149,51 @@ func (w *Worker) releaseTypeSlot(job Job) {
 
 func (w *Worker) handleFailedJob(ctx context.Context, job Job, handlerErr error) error {
 	if job.Attempts <= job.MaxRetries {
+		delay := w.retryDelay(job.Attempts)
+		retryAt := time.Now().Add(delay)
+
 		job.Status = JobStatusFailed
+		job.NextRetryAt = &retryAt
 		if err := w.Repo.Save(ctx, job); err != nil {
 			return err
 		}
 
 		log.Println("job failed", job.ID, handlerErr)
-		log.Println("retrying job", job.ID, "after", w.RetryDelay)
-
-		go func() {
-			time.Sleep(w.RetryDelay)
-			if err := w.Enqueue(context.Background(), job); err != nil {
-				log.Println("could not retry job", job.ID, err)
-			}
-		}()
+		log.Println("retry scheduled for job", job.ID, "after", delay)
 
 		return nil
 	}
 
 	job.Status = JobStatusDeadLetter
+	job.NextRetryAt = nil
 	if err := w.Repo.Save(ctx, job); err != nil {
 		return err
 	}
 
 	log.Println("job moved to dead letter", job.ID, handlerErr)
 	return nil
+}
+
+func (w *Worker) retryDelay(attempt int) time.Duration {
+	delay := w.RetryBase
+
+	for currentAttempt := 1; currentAttempt < attempt; currentAttempt++ {
+		if delay >= w.RetryMax/2 {
+			delay = w.RetryMax
+			break
+		}
+		delay *= 2
+	}
+
+	jitterLimit := delay / 4
+	if delay < w.RetryMax && jitterLimit > 0 {
+		jitter := time.Duration(rand.Int63n(int64(jitterLimit)))
+		delay += jitter
+	}
+
+	if delay > w.RetryMax {
+		return w.RetryMax
+	}
+
+	return delay
 }

@@ -213,6 +213,9 @@ func printJobs(ctx context.Context, service *jobs.Service) error {
 		if job.ScheduledAt != nil {
 			fmt.Printf(" | scheduled_at=%s", job.ScheduledAt.Format(time.RFC3339))
 		}
+		if job.NextRetryAt != nil {
+			fmt.Printf(" | next_retry_at=%s", job.NextRetryAt.Format(time.RFC3339))
+		}
 		if job.Error != "" {
 			fmt.Printf(" | error=%s", job.Error)
 		}
