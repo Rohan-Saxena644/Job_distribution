@@ -7,24 +7,20 @@ import (
 )
 
 type Worker struct {
-	Repo        *Repository
-	Dispatcher  *Dispatcher
-	HighQueue   chan int
-	MediumQueue chan int
-	LowQueue    chan int
-	RetryDelay  time.Duration
-	TypeLimits  map[JobType]chan struct{}
+	Repo       *Repository
+	Dispatcher *Dispatcher
+	Queue      JobQueue
+	RetryDelay time.Duration
+	TypeLimits map[JobType]chan struct{}
 }
 
-func NewWorker(repo *Repository, dispatcher *Dispatcher) *Worker {
+func NewWorker(repo *Repository, dispatcher *Dispatcher, queue JobQueue) *Worker {
 	return &Worker{
-		Repo:        repo,
-		Dispatcher:  dispatcher,
-		HighQueue:   make(chan int, 100),
-		MediumQueue: make(chan int, 100),
-		LowQueue:    make(chan int, 100),
-		RetryDelay:  300 * time.Millisecond,
-		TypeLimits:  make(map[JobType]chan struct{}),
+		Repo:       repo,
+		Dispatcher: dispatcher,
+		Queue:      queue,
+		RetryDelay: 300 * time.Millisecond,
+		TypeLimits: make(map[JobType]chan struct{}),
 	}
 }
 
@@ -39,54 +35,15 @@ func (w *Worker) SetConcurrencyLimit(jobType JobType, limit int) {
 func (w *Worker) Enqueue(job Job) {
 	job.Enqueued = true
 	w.Repo.Save(job)
-
-	switch job.Priority {
-	case JobPriorityHigh:
-		w.HighQueue <- job.ID
-	case JobPriorityLow:
-		w.LowQueue <- job.ID
-	default:
-		w.MediumQueue <- job.ID
-	}
+	w.Queue.Enqueue(job)
 }
 
 func (w *Worker) Start(workerID int) {
 	log.Println("worker started", workerID)
 
 	for {
-		jobID := w.nextJob()
+		jobID := w.Queue.NextJob()
 		w.Process(context.Background(), workerID, jobID)
-	}
-}
-
-func (w *Worker) nextJob() int {
-	for {
-		select {
-		case jobID := <-w.HighQueue:
-			return jobID
-		default:
-		}
-
-		select {
-		case jobID := <-w.MediumQueue:
-			return jobID
-		default:
-		}
-
-		select {
-		case jobID := <-w.LowQueue:
-			return jobID
-		default:
-		}
-
-		select {
-		case jobID := <-w.HighQueue:
-			return jobID
-		case jobID := <-w.MediumQueue:
-			return jobID
-		case jobID := <-w.LowQueue:
-			return jobID
-		}
 	}
 }
 

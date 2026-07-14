@@ -14,7 +14,8 @@ func main() {
 
 	repo := jobs.NewRepository()
 	dispatcher := jobs.NewDispatcher()
-	worker := jobs.NewWorker(repo, dispatcher)
+	queue := jobs.NewMemoryQueue(100)
+	worker := jobs.NewWorker(repo, dispatcher, queue)
 	scheduler := jobs.NewScheduler(repo, worker)
 	service := jobs.NewService(repo, worker)
 

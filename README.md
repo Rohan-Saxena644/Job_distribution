@@ -28,6 +28,47 @@ New job types should be added by registering handlers, without changing the core
 
 ---
 
+## Current and Target Architecture
+
+The project is already event-driven inside one Go process:
+
+```text
+Service -> priority channels -> workers -> dispatcher -> handler
+```
+
+The high, medium, and low Go channels act as the current in-memory message queues. Workers wait for job IDs and react when work arrives. This is useful for learning and local development, but the channels cannot deliver jobs to workers running in another application instance and their contents disappear when the process stops.
+
+The target architecture will keep the same job model and execution flow while making storage and transport replaceable:
+
+```text
+Service/Scheduler -> Job Repository -> Job Queue -> Worker
+                         |                 |           |
+                         |                 |           -> Dispatcher -> Handler
+                         |                 |
+                         |                 -> in-memory channels or RabbitMQ
+                         |
+                         -> in-memory storage or PostgreSQL
+
+Worker -> job events -> Redis Pub/Sub -> dashboards and notifications
+```
+
+Planned responsibilities:
+
+- The existing Go channels remain the default in-memory queue for development and tests.
+- The current repository remains available for local development, while PostgreSQL later provides job data shared by separate processes.
+- RabbitMQ becomes the durable job transport for production workers, with manual acknowledgements after processing.
+- Redis Pub/Sub broadcasts live events such as `job.started`, `job.completed`, and `job.failed`.
+- Redis Pub/Sub will not be the main job queue because messages can be lost while a worker is disconnected.
+- Redis can later also support distributed locks and idempotency keys, which are separate from Pub/Sub.
+
+This direction does not require a full rewrite. The service, scheduler, dispatcher, handlers, job statuses, and concurrency limits remain useful. Small repository and queue interfaces will isolate the in-memory and production implementations from the rest of the project.
+
+RabbitMQ messages can then contain a job ID because every producer and worker can load the same job from PostgreSQL. Sending only an ID before shared persistence exists would not work across processes.
+
+The project currently has retry and dead-letter handling with one fixed delay. Exponential backoff and jitter are valuable later, but retry scheduling must first survive application restarts. gRPC is optional and is not part of the core worker architecture; it should only be added if separate internal services need a strongly typed job-submission API.
+
+---
+
 ## Current Status
 
 The repository now has the first working in-memory version:
@@ -40,6 +81,7 @@ The repository now has the first working in-memory version:
 - Phase 5 is complete for simple priority queues
 - Phase 6 is complete for simple scheduled job enqueueing
 - Phase 7 is complete for a basic worker pool and per-job-type concurrency limits
+- Phase 8 is complete for the in-memory queue abstraction
 
 The demo runs three workers, while limiting deployment jobs to one active execution at a time.
 
@@ -208,13 +250,99 @@ Deliverable:
 
 - Three workers can process jobs concurrently while deployment jobs run one at a time
 
-### Phase 8+
+### Phase 8 - Queue Abstraction
+
+Status: complete for the in-memory version.
+
+Goal: separate job execution from the technology used to transport jobs.
+
+Tasks:
+
+- Define a small queue interface for publishing and consuming job IDs
+- Move the existing priority channels behind an in-memory implementation
+- Keep the current behavior and demo working without external services
+- Make workers depend on the queue interface instead of concrete channels
+
+Deliverable:
+
+- The application can change queue implementations without changing handlers or job business logic
+
+### Phase 9 - Persistent Job Repository
+
+Status: planned.
+
+Goal: make job state available to producers and workers running in separate processes.
+
+Tasks:
+
+- Define a repository interface based on the operations already used by the service, scheduler, and workers
+- Keep the existing in-memory repository for development and tests
+- Add a PostgreSQL repository for jobs, attempts, statuses, errors, priorities, and scheduled times
+- Ensure status changes are persisted safely
+
+Deliverable:
+
+- Different application processes can load and update the same jobs
+
+### Phase 10 - RabbitMQ Job Transport
+
+Status: planned.
+
+Goal: allow workers in different application instances to consume durable jobs.
+
+Tasks:
+
+- Add a RabbitMQ implementation of the queue interface
+- Preserve high, medium, and low priority routing
+- Use manual acknowledgements after a job reaches a safe final or retry state
+- Configure consumer prefetch to avoid sending too much work to one worker
+- Keep the in-memory queue available as the default development option
+
+Deliverable:
+
+- Producers and workers can run as separate processes without changing job handlers
+
+### Phase 11 - Durable Retry and Backoff
+
+Status: planned.
+
+Goal: make retries survive process restarts and avoid repeatedly hitting a failing dependency.
+
+Tasks:
+
+- Replace the fixed retry delay with exponential backoff
+- Add jitter so many failed jobs do not retry simultaneously
+- Store the next retry time instead of relying only on a sleeping goroutine
+- Preserve the existing maximum-attempt and dead-letter behavior
+
+Deliverable:
+
+- Failed jobs retry at increasing durable intervals and still reach the dead-letter state when exhausted
+
+### Phase 12 - Redis Events and Distributed Safety
+
+Status: planned.
+
+Goal: broadcast job lifecycle events and protect work across multiple instances.
+
+Tasks:
+
+- Publish `job.started`, `job.completed`, `job.failed`, and `job.dead_lettered` events
+- Add optional Redis Pub/Sub subscribers for dashboards and notifications
+- Add Redis-backed distributed locks
+- Add idempotency keys so re-delivered jobs do not repeat unsafe side effects
+
+Deliverable:
+
+- External services can react to live job events while workers remain safe against duplicate execution
+
+### Phase 13+
 
 Add these only after the MVP is stable:
 
-- Distributed locking
-- Idempotency
 - Metrics and production hardening
+- HTTP submission API
+- Optional gRPC API if multiple internal services require it
 
 ---
 
@@ -231,6 +359,7 @@ For the first iteration, the layout is intentionally small:
       repository.go
       dispatcher.go
       handlers.go
+      queue.go
       scheduler.go
       service.go
       worker.go
@@ -257,6 +386,7 @@ The first vertical slice now includes:
 - Scheduled job enqueueing
 - Basic multi-worker execution
 - Per-job-type concurrency limits
+- Replaceable queue interface with an in-memory priority queue
 - Demo flow from `main.go`
 
 ---
@@ -276,9 +406,11 @@ To keep the foundation clean, the first implementation should avoid:
 
 ## Next Phase
 
-The next major phase should focus on protecting execution across multiple application instances:
+The next phase should introduce a repository abstraction and shared persistence:
 
-- Add a distributed lock abstraction
-- Add idempotency keys to prevent the same logical job from running twice
-- Keep an in-memory implementation first so the behavior remains easy to understand
-- Decide on Redis or PostgreSQL only after the locking flow is clear
+- Define a repository interface from the operations already used by the application
+- Keep the current in-memory repository implementation
+- Add PostgreSQL without changing the service, scheduler, or worker behavior
+- Store shared job state before RabbitMQ carries job IDs between processes
+
+RabbitMQ, Redis, and advanced backoff should be added one boundary at a time. This keeps the code understandable and prevents external infrastructure from becoming mixed into the worker and handler logic. gRPC remains optional because it does not improve the core job execution path by itself.
