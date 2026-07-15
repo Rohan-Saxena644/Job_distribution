@@ -23,25 +23,27 @@ const (
 )
 
 type Job struct {
-	ID          int
-	Type        JobType
-	Payload     map[string]string
-	Status      JobStatus
-	Priority    JobPriority
-	ScheduledAt *time.Time
-	NextRetryAt *time.Time
-	Enqueued    bool
-	MaxRetries  int
-	Attempts    int
-	Error       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             int
+	IdempotencyKey string
+	Type           JobType
+	Payload        map[string]string
+	Status         JobStatus
+	Priority       JobPriority
+	ScheduledAt    *time.Time
+	NextRetryAt    *time.Time
+	Enqueued       bool
+	MaxRetries     int
+	Attempts       int
+	Error          string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type SubmitJobInput struct {
-	Type        JobType
-	Payload     map[string]string
-	Priority    JobPriority
-	ScheduledAt *time.Time
-	MaxRetries  int
+	IdempotencyKey string
+	Type           JobType
+	Payload        map[string]string
+	Priority       JobPriority
+	ScheduledAt    *time.Time
+	MaxRetries     int
 }

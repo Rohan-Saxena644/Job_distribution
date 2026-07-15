@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -71,11 +72,17 @@ func run() error {
 }
 
 func buildStorage(ctx context.Context) (jobs.JobRepository, jobs.JobQueue, error) {
-	databaseURL := os.Getenv("DATABASE_URL")
-	rabbitURL := os.Getenv("RABBITMQ_URL")
+	databaseURL, err := readConfigValue("DATABASE_URL", "DATABASE_URL_FILE")
+	if err != nil {
+		return nil, nil, err
+	}
+	rabbitURL, err := readConfigValue("RABBITMQ_URL", "RABBITMQ_URL_FILE")
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if (databaseURL == "") != (rabbitURL == "") {
-		return nil, nil, errors.New("set both DATABASE_URL and RABBITMQ_URL, or leave both empty for in-memory mode")
+		return nil, nil, errors.New("set both PostgreSQL and RabbitMQ URLs, directly or with their _FILE variables")
 	}
 
 	if databaseURL == "" {
@@ -104,7 +111,10 @@ func buildStorage(ctx context.Context) (jobs.JobRepository, jobs.JobQueue, error
 }
 
 func buildEventPublisher(ctx context.Context) (jobs.EventPublisher, error) {
-	redisURL := os.Getenv("REDIS_URL")
+	redisURL, err := readConfigValue("REDIS_URL", "REDIS_URL_FILE")
+	if err != nil {
+		return nil, err
+	}
 	if redisURL == "" {
 		return &jobs.NoopEventPublisher{}, nil
 	}
@@ -166,7 +176,18 @@ func runGRPCAPI(ctx context.Context, service *jobs.Service) error {
 		address = ":50051"
 	}
 
-	return jobs.StartGRPCServer(ctx, address, service)
+	authToken, err := readConfigValue("GRPC_AUTH_TOKEN", "GRPC_AUTH_TOKEN_FILE")
+	if err != nil {
+		return err
+	}
+
+	return jobs.StartGRPCServer(ctx, jobs.GRPCServerConfig{
+		Address:       address,
+		TLSCertFile:   os.Getenv("GRPC_TLS_CERT_FILE"),
+		TLSKeyFile:    os.Getenv("GRPC_TLS_KEY_FILE"),
+		AuthToken:     authToken,
+		AllowInsecure: os.Getenv("GRPC_ALLOW_INSECURE") == "true",
+	}, service)
 }
 
 func runGRPCClient(ctx context.Context) error {
@@ -175,9 +196,24 @@ func runGRPCClient(ctx context.Context) error {
 		address = "localhost:50051"
 	}
 
-	job, err := jobs.SubmitJobGRPC(ctx, address, jobs.SubmitJobInput{
-		Type:     jobs.JobType("email"),
-		Priority: jobs.JobPriorityHigh,
+	authToken, err := readConfigValue("GRPC_AUTH_TOKEN", "GRPC_AUTH_TOKEN_FILE")
+	if err != nil {
+		return err
+	}
+	idempotencyKey := os.Getenv("IDEMPOTENCY_KEY")
+	if idempotencyKey == "" {
+		idempotencyKey = fmt.Sprintf("grpc-client-%d", time.Now().UnixNano())
+	}
+
+	job, err := jobs.SubmitJobGRPC(ctx, jobs.GRPCClientConfig{
+		Address:       address,
+		TLSCAFile:     os.Getenv("GRPC_TLS_CA_FILE"),
+		TLSServerName: os.Getenv("GRPC_TLS_SERVER_NAME"),
+		AuthToken:     authToken,
+	}, jobs.SubmitJobInput{
+		IdempotencyKey: idempotencyKey,
+		Type:           jobs.JobType("email"),
+		Priority:       jobs.JobPriorityHigh,
 		Payload: map[string]string{
 			"to":      "grpc@example.com",
 			"subject": "Submitted through gRPC",
@@ -190,6 +226,24 @@ func runGRPCClient(ctx context.Context) error {
 
 	log.Println("gRPC submitted job", job.ID, "type:", job.Type, "status:", job.Status)
 	return nil
+}
+
+func readConfigValue(valueName string, fileName string) (string, error) {
+	path := os.Getenv(fileName)
+	if path == "" {
+		return os.Getenv(valueName), nil
+	}
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", fileName, err)
+	}
+
+	value := strings.TrimSpace(string(contents))
+	if value == "" {
+		return "", fmt.Errorf("%s cannot be empty", fileName)
+	}
+	return value, nil
 }
 
 func startWorkers(ctx context.Context, worker *jobs.Worker, scheduler *jobs.Scheduler) {

@@ -43,18 +43,11 @@ func (w *Worker) SetConcurrencyLimit(jobType JobType, limit int) {
 }
 
 func (w *Worker) Enqueue(ctx context.Context, job Job) error {
-	job.Enqueued = true
-	if err := w.Repo.Save(ctx, job); err != nil {
-		return err
-	}
-
 	if err := w.Queue.Enqueue(ctx, job); err != nil {
-		job.Enqueued = false
-		_ = w.Repo.Save(ctx, job)
 		return err
 	}
 
-	return nil
+	return w.Repo.MarkEnqueued(ctx, job.ID)
 }
 
 func (w *Worker) Start(ctx context.Context, workerID int) {
@@ -72,7 +65,7 @@ func (w *Worker) Start(ctx context.Context, workerID int) {
 			continue
 		}
 
-		err = w.Process(ctx, workerID, delivery.JobID)
+		err = w.process(ctx, workerID, delivery.JobID, delivery.Redelivered)
 		if err != nil {
 			log.Println("worker", workerID, "could not process job", delivery.JobID, err)
 
@@ -94,26 +87,21 @@ func (w *Worker) Start(ctx context.Context, workerID int) {
 }
 
 func (w *Worker) Process(ctx context.Context, workerID int, jobID int) error {
-	job, err := w.Repo.Get(ctx, jobID)
+	return w.process(ctx, workerID, jobID, false)
+}
+
+func (w *Worker) process(ctx context.Context, workerID int, jobID int, allowRunning bool) error {
+	job, claimed, err := w.Repo.Claim(ctx, jobID, allowRunning)
 	if err != nil {
 		return err
 	}
-
-	if job.Status == JobStatusCompleted || job.Status == JobStatusDeadLetter {
-		log.Println("worker", workerID, "skipping finished job", job.ID, "status:", job.Status)
+	if !claimed {
+		log.Println("worker", workerID, "skipping already claimed or finished job", jobID)
 		return nil
 	}
 
 	w.acquireTypeSlot(workerID, job)
 	defer w.releaseTypeSlot(job)
-
-	job.Enqueued = false
-	job.Status = JobStatusRunning
-	job.NextRetryAt = nil
-	job.Attempts++
-	if err := w.Repo.Save(ctx, job); err != nil {
-		return err
-	}
 	w.publishEvent(ctx, "job.started", job)
 
 	log.Println("worker", workerID, "processing job", job.ID, "type:", job.Type, "priority:", job.Priority, "attempt:", job.Attempts)

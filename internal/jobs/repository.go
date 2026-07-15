@@ -10,9 +10,11 @@ import (
 var ErrJobNotFound = errors.New("job not found")
 
 type JobRepository interface {
-	Create(ctx context.Context, job Job) (Job, error)
+	Create(ctx context.Context, job Job) (Job, bool, error)
 	Get(ctx context.Context, id int) (Job, error)
 	Save(ctx context.Context, job Job) error
+	MarkEnqueued(ctx context.Context, id int) error
+	Claim(ctx context.Context, id int, allowRunning bool) (Job, bool, error)
 	List(ctx context.Context) ([]Job, error)
 	DueJobs(ctx context.Context, now time.Time) ([]Job, error)
 	Close()
@@ -31,9 +33,17 @@ func NewRepository() *Repository {
 	}
 }
 
-func (r *Repository) Create(ctx context.Context, job Job) (Job, error) {
+func (r *Repository) Create(ctx context.Context, job Job) (Job, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if job.IdempotencyKey != "" {
+		for _, id := range r.order {
+			if r.jobs[id].IdempotencyKey == job.IdempotencyKey {
+				return r.jobs[id], false, nil
+			}
+		}
+	}
 
 	r.nextID++
 
@@ -46,7 +56,7 @@ func (r *Repository) Create(ctx context.Context, job Job) (Job, error) {
 	r.jobs[job.ID] = job
 	r.order = append(r.order, job.ID)
 
-	return job, nil
+	return job, true, nil
 }
 
 func (r *Repository) Get(ctx context.Context, id int) (Job, error) {
@@ -74,6 +84,52 @@ func (r *Repository) Save(ctx context.Context, job Job) error {
 	return nil
 }
 
+func (r *Repository) MarkEnqueued(ctx context.Context, id int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	job, exists := r.jobs[id]
+	if !exists {
+		return ErrJobNotFound
+	}
+
+	if job.Status == JobStatusQueued || job.Status == JobStatusFailed {
+		job.Enqueued = true
+		job.UpdatedAt = time.Now()
+		r.jobs[id] = job
+	}
+
+	return nil
+}
+
+func (r *Repository) Claim(ctx context.Context, id int, allowRunning bool) (Job, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	job, exists := r.jobs[id]
+	if !exists {
+		return Job{}, false, ErrJobNotFound
+	}
+
+	claimable := job.Status == JobStatusQueued || job.Status == JobStatusFailed
+	if allowRunning && job.Status == JobStatusRunning {
+		claimable = true
+	}
+	if !claimable {
+		return job, false, nil
+	}
+
+	job.Status = JobStatusRunning
+	job.Enqueued = false
+	job.NextRetryAt = nil
+	job.Attempts++
+	job.Error = ""
+	job.UpdatedAt = time.Now()
+	r.jobs[id] = job
+
+	return job, true, nil
+}
+
 func (r *Repository) List(ctx context.Context) ([]Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,7 +154,7 @@ func (r *Repository) DueJobs(ctx context.Context, now time.Time) ([]Job, error) 
 			continue
 		}
 
-		if job.Status == JobStatusQueued && job.ScheduledAt != nil && !job.ScheduledAt.After(now) {
+		if job.Status == JobStatusQueued && (job.ScheduledAt == nil || !job.ScheduledAt.After(now)) {
 			jobs = append(jobs, job)
 		}
 

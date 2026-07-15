@@ -138,7 +138,8 @@ func (q *RabbitMQQueue) NextJob(ctx context.Context) (JobDelivery, error) {
 		}
 
 		return JobDelivery{
-			JobID: message.JobID,
+			JobID:       message.JobID,
+			Redelivered: delivery.Redelivered,
 			ack: func() error {
 				q.ackMu.Lock()
 				defer q.ackMu.Unlock()

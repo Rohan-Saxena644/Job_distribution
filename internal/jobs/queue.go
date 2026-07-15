@@ -3,9 +3,10 @@ package jobs
 import "context"
 
 type JobDelivery struct {
-	JobID int
-	ack   func() error
-	nack  func() error
+	JobID       int
+	Redelivered bool
+	ack         func() error
+	nack        func() error
 }
 
 func (d JobDelivery) Ack() error {
