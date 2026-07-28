@@ -5,6 +5,8 @@ A background job-processing platform built in Go with priority queues, concurren
 The project can run entirely in memory for learning and local testing, or in distributed mode with producers and workers running as separate processes.
 
 The original phase-by-phase development notes are preserved in [JOURNEY.txt](JOURNEY.txt).
+The API contract, security model, delivery semantics, and detailed architecture
+are documented in [docs/API_TECHNICAL_DOCUMENTATION.md](docs/API_TECHNICAL_DOCUMENTATION.md).
 
 ## Features
 
@@ -110,6 +112,8 @@ Retry times are stored in PostgreSQL. This allows the scheduler to recover pendi
 |-- main.go
 |-- Dockerfile
 |-- compose.yaml
+|-- docs/
+|   `-- API_TECHNICAL_DOCUMENTATION.md
 |-- scripts/
 |   `-- generate-local-secrets.ps1
 |-- secrets/
