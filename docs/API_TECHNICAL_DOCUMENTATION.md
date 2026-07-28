@@ -563,6 +563,9 @@ The current API is a deliberate first version. It does not yet include:
 These are reasonable extensions if the project moves from a portfolio-grade
 distributed backend into a multi-user production service.
 
+An ordered implementation and learning plan for these extensions is available
+in the [observability and production roadmap](README.md).
+
 ## 18. Architecture Diagram
 
 The diagram below is Mermaid syntax. GitHub renders it as a visual diagram, and

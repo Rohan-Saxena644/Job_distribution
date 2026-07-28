@@ -7,6 +7,8 @@ The project can run entirely in memory for learning and local testing, or in dis
 The original phase-by-phase development notes are preserved in [JOURNEY.txt](JOURNEY.txt).
 The API contract, security model, delivery semantics, and detailed architecture
 are documented in [docs/API_TECHNICAL_DOCUMENTATION.md](docs/API_TECHNICAL_DOCUMENTATION.md).
+The ordered observability and production learning roadmap is available in
+[docs/README.md](docs/README.md).
 
 ## Features
 
@@ -113,7 +115,8 @@ Retry times are stored in PostgreSQL. This allows the scheduler to recover pendi
 |-- Dockerfile
 |-- compose.yaml
 |-- docs/
-|   `-- API_TECHNICAL_DOCUMENTATION.md
+|   |-- API_TECHNICAL_DOCUMENTATION.md
+|   `-- README.md
 |-- scripts/
 |   `-- generate-local-secrets.ps1
 |-- secrets/
